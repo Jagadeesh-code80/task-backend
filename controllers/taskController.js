@@ -205,36 +205,97 @@ exports.toggleTaskLog = async (req, res) => {
     }
 
     // ===================== STOP TASK =====================
-    else {
-      const runningLog = await TaskLog.findOne({ taskId, userId, isRunning: true });
-      if (!runningLog) {
-        return res.status(400).json({ message: 'No running log found for this task' });
-      }
+   else {
+  const runningLog = await TaskLog.findOne({ taskId, userId, isRunning: true });
+  if (!runningLog) {
+    return res.status(400).json({ message: 'No running log found for this task' });
+  }
 
-      runningLog.isRunning = false;
-      runningLog.endTime = new Date();
-      runningLog.durationMinutes = Math.floor(
-        (runningLog.endTime - runningLog.startTime) / (1000 * 60)
-      );
+  runningLog.isRunning = false;
+  runningLog.endTime = new Date();
+  runningLog.durationMinutes = Math.floor(
+    (runningLog.endTime - runningLog.startTime) / (1000 * 60)
+  );
 
-      await runningLog.save();
+  await runningLog.save();
 
-      // 🔹 Calculate total duration for this task (all logs)
-      const allLogs = await TaskLog.find({ taskId });
-      const totalMinutes = allLogs.reduce((sum, log) => sum + (log.durationMinutes || 0), 0);
-      const totalHours = parseFloat((totalMinutes / 60).toFixed(2)); // 2 decimal precision
+  // 🔹 Calculate total duration for this task (all logs)
+  const allLogs = await TaskLog.find({ taskId });
+  const totalMinutes = allLogs.reduce((sum, log) => sum + (log.durationMinutes || 0), 0);
 
-      // 🔹 Update Task actualHours
-      await Task.findByIdAndUpdate(taskId, { actualHours: totalHours }, { new: true });
+  // Convert total minutes -> HH:mm
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  const formattedTime = `${hours}:${String(minutes).padStart(2, '0')}`;
 
-      return res.status(200).json({
-        message: 'Task stopped successfully',
-        log: runningLog,
-        totalHours
-      });
-    }
+  // 🔹 Update Task with hh:mm format
+  await Task.findByIdAndUpdate(taskId, {
+    actualHours: formattedTime
+  }, { new: true });
+
+  return res.status(200).json({
+    message: 'Task stopped successfully',
+    log: runningLog,
+    actualHours: formattedTime
+  });
+}
   } catch (err) {
     console.error('Toggle TaskLog Error:', err);
     res.status(500).json({ message: 'Internal server error' });
+  }
+};
+
+
+// Get all Task Logs
+exports.getAllTaskLogs = async (req, res) => {
+  try {
+    const logs = await TaskLog.find()
+      .populate("taskId", "name description") // populate task fields
+      .populate("userId", "name email"); // populate user fields
+
+    res.status(200).json({
+      message: "All task logs fetched successfully",
+      count: logs.length,
+      logs,
+    });
+  } catch (err) {
+    console.error("Get All TaskLogs Error:", err);
+    res.status(500).json({ message: "Internal server error" });
+  }
+};
+// Get Task Logs by Task ID
+exports.getTaskLogsByTask = async (req, res) => {
+  try {
+    const { taskId } = req.params;
+
+    if (!taskId) {
+      return res.status(400).json({ message: "Task ID is required" });
+    }
+
+    const task = await Task.findById(taskId);
+    if (!task) {
+      return res.status(404).json({ message: "Task not found" });
+    }
+
+    const logs = await TaskLog.find({ taskId })
+      .populate("userId", "name email") // populate user fields
+      .sort({ startTime: -1 }); // latest first
+
+    // 🔹 Calculate total hours for this task
+    const totalMinutes = logs.reduce(
+      (sum, log) => sum + (log.durationMinutes || 0),
+      0
+    );
+    const totalHours = parseFloat((totalMinutes / 60).toFixed(2));
+
+    res.status(200).json({
+      message: "Task logs fetched successfully",
+      task: { _id: task._id, name: task.name },
+      totalHours,
+      logs,
+    });
+  } catch (err) {
+    console.error("Get TaskLogs By Task Error:", err);
+    res.status(500).json({ message: "Internal server error" });
   }
 };

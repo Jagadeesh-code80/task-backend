@@ -12,8 +12,8 @@ const taskSchema = new mongoose.Schema({
   startDate: Date,
   dueDate: Date,
   completedDate: Date,
-  estimatedHours: { type: Number, min: 0 },
-  actualHours: { type: Number, min: 0 },
+ estimatedHours: { type: String, trim: true },  // e.g. "05:00"
+  actualHours: { type: String, trim: true },     // e.g. "02:35"
   progress: { type: Number, min: 0, max: 100, default: 0 },
   parentTaskId: { type: mongoose.Schema.Types.ObjectId, ref: 'Task', default: null },
   attachments: [{ fileUrl: String, fileName: String }],
