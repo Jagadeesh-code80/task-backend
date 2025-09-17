@@ -90,6 +90,8 @@ const userSchema = new mongoose.Schema({
     ref: 'Designation',
   },
 
+  isOnline: { type: Boolean, default: false },
+lastSeen: { type: Date },
   status: {
     type: String,
     enum: ['active', 'inactive', 'blocked'],

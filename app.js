@@ -4,6 +4,7 @@ const dotenv = require('dotenv');
 const cors = require('cors');
 const { createServer } = require('http');
 const { Server } = require('socket.io');
+const User = mongoose.model("User");
 
 dotenv.config();
 
@@ -54,14 +55,20 @@ app.use('/api/chat', require('./routes/chatRoutes')); // <-- chat API
 // --------- Import Controllers for reuse ---------
 const chatController = require('./controllers/chatController');
 
-// --------- Socket.IO Events ---------
 io.on("connection", (socket) => {
   console.log(`🔗 User connected: ${socket.id}`);
 
-  // Join personal room
-  socket.on("register", (userId) => {
-    socket.join(userId);
+  // Register user (after login, frontend sends userId)
+  socket.on("register", async (userId) => {
+    socket.userId = userId; // store in socket for disconnect
+    socket.join(userId); // personal room
     console.log(`✅ User ${userId} joined personal room`);
+
+    // Mark user online in DB
+    await User.findByIdAndUpdate(userId, { isOnline: true, lastSeen: null });
+
+    // Notify all other clients
+    socket.broadcast.emit("userOnline", { userId });
   });
 
   // Join conversation room
@@ -70,12 +77,13 @@ io.on("connection", (socket) => {
     console.log(`✅ User joined conversation ${conversationId}`);
   });
 
-  // Send message via socket → reuse controller
+  // Send message via socket
   socket.on("sendMessage", async (data, callback) => {
     try {
       const { conversationId, senderId, text, fileUrl, replyTo } = data;
 
-      const message = await mongoose.model("Message").create({
+      const Message = mongoose.model("Message");
+      const message = await Message.create({
         conversationId,
         sender: senderId,
         text,
@@ -105,6 +113,7 @@ io.on("connection", (socket) => {
         createdBy,
       });
 
+      // Notify all participants
       participants.forEach(p => io.to(p).emit("groupCreated", group));
 
       if (callback) callback({ success: true, group });
@@ -119,11 +128,25 @@ io.on("connection", (socket) => {
     socket.to(conversationId).emit("typing", { senderId });
   });
 
-  // Disconnect
-  socket.on("disconnect", () => {
-    console.log(`❌ User disconnected: ${socket.id}`);
+  // Disconnect - handle online/offline
+  socket.on("disconnect", async () => {
+    if (socket.userId) {
+      console.log(`❌ User disconnected: ${socket.userId}`);
+
+      // Mark user offline in DB
+      await User.findByIdAndUpdate(socket.userId, { 
+        isOnline: false, 
+        lastSeen: new Date() 
+      });
+
+      // Notify all clients
+      socket.broadcast.emit("userOffline", { userId: socket.userId });
+    } else {
+      console.log(`❌ Socket disconnected without userId: ${socket.id}`);
+    }
   });
 });
+
 
 // --------- Start Server ---------
 const PORT = process.env.PORT || 3000;
