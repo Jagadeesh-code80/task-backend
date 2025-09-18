@@ -9,20 +9,35 @@ exports.getOrCreateConversation = async (req, res) => {
     let conversation = await Conversation.findOne({
       isGroup: false,
       participants: { $all: [userId1, userId2] },
-    });
+    }).populate("participants", "name email avatar");
 
     if (!conversation) {
       conversation = await Conversation.create({
         participants: [userId1, userId2],
         isGroup: false,
       });
+
+      // populate before sending back
+      conversation = await Conversation.findById(conversation._id)
+        .populate("participants", "name email avatar");
+
+      // 🔔 Emit event to user2 (the new friend)
+      if (req.io) {
+        req.io.to(userId2.toString()).emit("newConversation", conversation);
+
+        // Optional: also notify user1 that a new conversation was created
+        req.io.to(userId1.toString()).emit("newConversation", conversation);
+      }
     }
 
     res.json(conversation);
   } catch (err) {
+    console.error("getOrCreateConversation error:", err);
     res.status(500).json({ error: err.message });
   }
 };
+
+
 // Get all conversations for a specific user
 exports.getUserConversations = async (req, res) => {
   try {

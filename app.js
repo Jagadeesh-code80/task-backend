@@ -4,7 +4,8 @@ const dotenv = require('dotenv');
 const cors = require('cors');
 const { createServer } = require('http');
 const { Server } = require('socket.io');
-const User = mongoose.model("User");
+const User = require("./models/User"); 
+
 
 dotenv.config();
 
@@ -40,7 +41,7 @@ app.use((req, res, next) => {
 });
 
 // --------- REST API Routes ---------
-app.get('/api/test', (req, res) => res.json({ status: 'Server running ✅' }));
+app.post('/api/test', (req, res) => res.json({ status: 'Server running ✅',Requeestbody:req.body }));
 
 app.use('/api', require('./routes/authRoutes'));
 app.use('/api/company', require('./routes/companyRoutes'));
@@ -50,7 +51,7 @@ app.use('/api/designation', require('./routes/designation'));
 app.use('/api/employees', require('./routes/userRoutes'));
 app.use('/api/project', require('./routes/projectRoutes'));
 app.use('/api/task', require('./routes/taskRoutes'));
-app.use('/api/chat', require('./routes/chatRoutes')); // <-- chat API
+app.use('/api/chat', require('./routes/chatRoutes')); 
 
 // --------- Import Controllers for reuse ---------
 const chatController = require('./controllers/chatController');
@@ -78,29 +79,59 @@ io.on("connection", (socket) => {
   });
 
   // Send message via socket
-  socket.on("sendMessage", async (data, callback) => {
-    try {
-      const { conversationId, senderId, text, fileUrl, replyTo } = data;
+ // Send message via socket
+socket.on("sendMessage", async (data, callback) => {
+  try {
+    const { conversationId, senderId, receiverId, text, fileUrl, replyTo } = data;
 
-      const Message = mongoose.model("Message");
-      const message = await Message.create({
-        conversationId,
-        sender: senderId,
-        text,
-        fileUrl,
-        replyTo,
+    const Message = mongoose.model("Message");
+    const Conversation = mongoose.model("Conversation");
+
+    let conversation;
+
+    // If conversationId not provided, check if one exists
+    if (!conversationId) {
+      conversation = await Conversation.findOne({
+        participants: { $all: [senderId, receiverId], $size: 2 }
       });
 
-      await message.populate("sender", "name email avatar");
+      // If no conversation exists, create new one
+      if (!conversation) {
+        conversation = await Conversation.create({
+          participants: [senderId, receiverId],
+          isGroup: false
+        });
 
-      io.to(conversationId.toString()).emit("newMessage", message);
-
-      if (callback) callback({ success: true, message });
-    } catch (err) {
-      console.error("❌ Socket sendMessage error:", err.message);
-      if (callback) callback({ success: false, error: err.message });
+        // 🔔 Emit newConversation to both users
+        [senderId, receiverId].forEach(uid => {
+          io.to(uid.toString()).emit("newConversation", conversation);
+        });
+      }
+    } else {
+      conversation = await Conversation.findById(conversationId);
     }
-  });
+
+    // Save the message
+    const message = await Message.create({
+      conversationId: conversation._id,
+      sender: senderId,
+      text,
+      fileUrl,
+      replyTo,
+    });
+
+    await message.populate("sender", "name email avatar");
+
+    // Emit newMessage inside conversation room
+    io.to(conversation._id.toString()).emit("newMessage", message);
+
+    if (callback) callback({ success: true, message, conversation });
+  } catch (err) {
+    console.error("❌ Socket sendMessage error:", err.message);
+    if (callback) callback({ success: false, error: err.message });
+  }
+});
+
 
   // Create group via socket
   socket.on("createGroup", async ({ name, participants, createdBy }, callback) => {
