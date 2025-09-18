@@ -41,7 +41,16 @@ app.use((req, res, next) => {
 });
 
 // --------- REST API Routes ---------
-app.post('/api/test', (req, res) => res.json({ status: 'Server running ✅',Requeestbody:req.body }));
+app.post('/api/test', (req, res) => {
+  // Log request body in server console
+  console.log("Request Body:", req.body);
+
+  // Send response back to client
+  res.json({
+    status: 'Server running ✅',
+    RequestBody: req.body
+  });
+});
 
 app.use('/api', require('./routes/authRoutes'));
 app.use('/api/company', require('./routes/companyRoutes'));
