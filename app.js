@@ -63,86 +63,99 @@ app.use('/api/task', require('./routes/taskRoutes'));
 app.use('/api/chat', require('./routes/chatRoutes')); 
 
 // --------- Import Controllers for reuse ---------
-const chatController = require('./controllers/chatController');
+const { fetchUserConversations } = require("./controllers/chatController");
 
 io.on("connection", (socket) => {
   console.log(`🔗 User connected: ${socket.id}`);
 
-  // Register user (after login, frontend sends userId)
+
+  // ✅ Register user (after login)
   socket.on("register", async (userId) => {
     socket.userId = userId; // store in socket for disconnect
     socket.join(userId); // personal room
     console.log(`✅ User ${userId} joined personal room`);
-
     // Mark user online in DB
-    await User.findByIdAndUpdate(userId, { isOnline: true, lastSeen: null });
+    await User.findByIdAndUpdate(
+      userId,
+      { isOnline: true, lastSeen: null },
+      { new: true, select: "_id name email isOnline lastSeen" }
+    );
 
-    // Notify all other clients
+    console.log("✅ User marked online:", userId);
+
+    // Send conversation list to this user
+     const convList = await fetchUserConversations(userId);
+    io.to(userId).emit("conversationList", convList);
+
+    // Notify other users that this user is online
     socket.broadcast.emit("userOnline", { userId });
   });
 
-  // Join conversation room
+  // ✅ Join conversation room
   socket.on("joinConversation", (conversationId) => {
     socket.join(conversationId);
     console.log(`✅ User joined conversation ${conversationId}`);
   });
 
-  // Send message via socket
- // Send message via socket
-socket.on("sendMessage", async (data, callback) => {
-  try {
-    const { conversationId, senderId, receiverId, text, fileUrl, replyTo } = data;
+  // ✅ Send message via socket
+  socket.on("sendMessage", async (data, callback) => {
+    try {
+      const { conversationId, senderId, receiverId, text, fileUrl, replyTo } = data;
 
-    const Message = mongoose.model("Message");
-    const Conversation = mongoose.model("Conversation");
+      const Message = mongoose.model("Message");
+      const Conversation = mongoose.model("Conversation");
 
-    let conversation;
+      let conversation;
 
-    // If conversationId not provided, check if one exists
-    if (!conversationId) {
-      conversation = await Conversation.findOne({
-        participants: { $all: [senderId, receiverId], $size: 2 }
+      // Find or create conversation
+      if (!conversationId) {
+        conversation = await Conversation.findOne({
+          participants: { $all: [senderId, receiverId], $size: 2 }
+        });
+
+        if (!conversation) {
+          conversation = await Conversation.create({
+            participants: [senderId, receiverId],
+            isGroup: false
+          });
+
+          // 🔔 Emit newConversation to both users
+          [senderId, receiverId].forEach(uid => {
+            io.to(uid.toString()).emit("newConversation", conversation);
+          });
+        }
+      } else {
+        conversation = await Conversation.findById(conversationId);
+      }
+
+      // Save the message
+      const message = await Message.create({
+        conversationId: conversation._id,
+        sender: senderId,
+        text,
+        fileUrl,
+        replyTo,
       });
 
-      // If no conversation exists, create new one
-      if (!conversation) {
-        conversation = await Conversation.create({
-          participants: [senderId, receiverId],
-          isGroup: false
-        });
+      await message.populate("sender", "name email avatar");
 
-        // 🔔 Emit newConversation to both users
-        [senderId, receiverId].forEach(uid => {
-          io.to(uid.toString()).emit("newConversation", conversation);
-        });
+      // Emit message to conversation room
+      io.to(conversation._id.toString()).emit("newMessage", message);
+
+      // ✅ Send updated conversation list to both participants
+      for (const p of conversation.participants) {
+        const convList = await getUserConversations(p.toString());
+        io.to(p.toString()).emit("conversationList", convList);
       }
-    } else {
-      conversation = await Conversation.findById(conversationId);
+
+      if (callback) callback({ success: true, message, conversation });
+    } catch (err) {
+      console.error("❌ Socket sendMessage error:", err.message);
+      if (callback) callback({ success: false, error: err.message });
     }
+  });
 
-    // Save the message
-    const message = await Message.create({
-      conversationId: conversation._id,
-      sender: senderId,
-      text,
-      fileUrl,
-      replyTo,
-    });
-
-    await message.populate("sender", "name email avatar");
-
-    // Emit newMessage inside conversation room
-    io.to(conversation._id.toString()).emit("newMessage", message);
-
-    if (callback) callback({ success: true, message, conversation });
-  } catch (err) {
-    console.error("❌ Socket sendMessage error:", err.message);
-    if (callback) callback({ success: false, error: err.message });
-  }
-});
-
-
-  // Create group via socket
+  // ✅ Create group via socket
   socket.on("createGroup", async ({ name, participants, createdBy }, callback) => {
     try {
       const Conversation = mongoose.model("Conversation");
@@ -153,8 +166,13 @@ socket.on("sendMessage", async (data, callback) => {
         createdBy,
       });
 
-      // Notify all participants
-      participants.forEach(p => io.to(p).emit("groupCreated", group));
+      // Notify all participants about new group
+      participants.forEach(async (p) => {
+        io.to(p).emit("groupCreated", group);
+        // Also refresh conversation list for each participant
+        const convList = await getUserConversations(p);
+        io.to(p.toString()).emit("conversationList", convList);
+      });
 
       if (callback) callback({ success: true, group });
     } catch (err) {
@@ -163,29 +181,32 @@ socket.on("sendMessage", async (data, callback) => {
     }
   });
 
-  // Typing indicator
+  // ✅ Typing indicator
   socket.on("typing", ({ conversationId, senderId }) => {
     socket.to(conversationId).emit("typing", { senderId });
   });
 
-  // Disconnect - handle online/offline
+  // ✅ Disconnect - handle online/offline
   socket.on("disconnect", async () => {
     if (socket.userId) {
       console.log(`❌ User disconnected: ${socket.userId}`);
 
-      // Mark user offline in DB
-      await User.findByIdAndUpdate(socket.userId, { 
-        isOnline: false, 
-        lastSeen: new Date() 
-      });
+     User.findByIdAndUpdate(
+        socket.userId,
+        { isOnline: false, lastSeen: new Date() },
+        { new: true, select: "_id name email isOnline lastSeen" }
+      );
 
       // Notify all clients
       socket.broadcast.emit("userOffline", { userId: socket.userId });
+
+
     } else {
       console.log(`❌ Socket disconnected without userId: ${socket.id}`);
     }
   });
 });
+
 
 
 // --------- Start Server ---------

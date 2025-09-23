@@ -19,7 +19,7 @@ exports.getOrCreateConversation = async (req, res) => {
 
       // populate before sending back
       conversation = await Conversation.findById(conversation._id)
-        .populate("participants", "name email avatar");
+        .populate("participants", "name email avatar isOnline lastSeen");
 
       // 🔔 Emit event to user2 (the new friend)
       if (req.io) {
@@ -46,7 +46,7 @@ exports.getUserConversations = async (req, res) => {
     const conversations = await Conversation.find({
       participants: userId,
     })
-      .populate("participants", "name email avatar")
+      .populate("participants", "name email avatar isOnline lastSeen")
       .populate("createdBy", "name email")
       .sort({ updatedAt: -1 })
       .lean(); // plain JS objects
@@ -64,6 +64,25 @@ exports.getUserConversations = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
+
+// Helper to fetch conversations (used in socket events)
+async function fetchUserConversations(userId) {
+  const conversations = await Conversation.find({ participants: userId })
+    .populate("participants", "name email avatar isOnline lastSeen")
+    .populate("createdBy", "name email")
+    .sort({ updatedAt: -1 })
+    .lean();
+
+  // Remove logged-in user from participants array
+  return conversations.map(conv => ({
+    ...conv,
+    participants: conv.participants.filter(
+      p => p._id.toString() !== userId
+    )
+  }));
+}
+
+exports.fetchUserConversations = fetchUserConversations;
 
 
 // Create group conversation
