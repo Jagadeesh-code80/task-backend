@@ -1,5 +1,6 @@
 const Conversation = require("../models/Conversation");
 const Message = require("../models/Message");
+const mongoose = require("mongoose");
 
 // Create or get 1-1 conversation
 exports.getOrCreateConversation = async (req, res) => {
@@ -65,20 +66,64 @@ exports.getUserConversations = async (req, res) => {
   }
 };
 
-// Helper to fetch conversations (used in socket events)
 async function fetchUserConversations(userId) {
-  const conversations = await Conversation.find({ participants: userId })
-    .populate("participants", "name email avatar isOnline lastSeen")
-    .populate("createdBy", "name email")
-    .sort({ updatedAt: -1 })
-    .lean();
+  const conversations = await Conversation.aggregate([
+    {
+      $match: {
+      participants: new mongoose.Types.ObjectId(userId)
+      },
+    },
+    {
+      $lookup: {
+        from: "messages",
+        let: { convId: "$_id" },
+        pipeline: [
+          {
+            $match: {
+              $expr: {
+                $and: [
+                  { $eq: ["$conversationId", "$$convId"] },
+                  { $eq: ["$isRead", false] },
+                  { $ne: ["$sender", mongoose.Types.ObjectId(userId)] }, // don't count own messages
+                ],
+              },
+            },
+          },
+        ],
+        as: "unreadMessages",
+      },
+    },
+    {
+      $addFields: {
+        unreadCount: { $size: "$unreadMessages" },
+      },
+    },
+    {
+      $lookup: {
+        from: "users",
+        localField: "participants",
+        foreignField: "_id",
+        as: "participants",
+      },
+    },
+    {
+      $lookup: {
+        from: "users",
+        localField: "createdBy",
+        foreignField: "_id",
+        as: "createdBy",
+      },
+    },
+    { $unwind: { path: "$createdBy", preserveNullAndEmptyArrays: true } },
+    { $sort: { updatedAt: -1 } },
+  ]);
 
   // Remove logged-in user from participants array
-  return conversations.map(conv => ({
+  return conversations.map((conv) => ({
     ...conv,
     participants: conv.participants.filter(
-      p => p._id.toString() !== userId
-    )
+      (p) => p._id.toString() !== userId
+    ),
   }));
 }
 
