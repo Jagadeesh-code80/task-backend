@@ -84,7 +84,7 @@ async function fetchUserConversations(userId) {
                 $and: [
                   { $eq: ["$conversationId", "$$convId"] },
                   { $eq: ["$isRead", false] },
-                  { $ne: ["$sender", mongoose.Types.ObjectId(userId)] }, // don't count own messages
+                  { $ne: ["$sender", new mongoose.Types.ObjectId(userId)] }, // don't count own messages
                 ],
               },
             },
