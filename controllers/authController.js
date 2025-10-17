@@ -1,11 +1,12 @@
 const User = require('../models/User');
 const jwt = require('jsonwebtoken');
+const bcrypt = require('bcryptjs');
 
 
 // Full User Registration Controller
 exports.register = async (req, res) => {
   try {
-    const {
+    let {
       empId,
       name,
       aliasName,
@@ -25,88 +26,122 @@ exports.register = async (req, res) => {
       createdBy
     } = req.body;
 
-    // Common required fields for all roles
+    // 🧩 Common required fields for all roles
     if (!empId || !name || !email || !password || !role) {
       return res.status(400).json({
-        message:
-          'Required fields missing: empId, name, email, password, role'
+        message: 'Required fields missing: empId, name, email, password, role'
       });
     }
 
-    // Role-specific required fields mapping
+    // 🧩 Logged-in user details
+    const LoginRole = req.user.role;
+    const LogInUserDetails = await User.findById(req.user.userId);
+
+    // 🧩 Check if email already exists
+    const existingEmail = await User.findOne({ email: email.trim().toLowerCase() });
+    if (existingEmail) {
+      return res.status(400).json({
+        message: 'Email already exists. Please use a different email address.'
+      });
+    }
+
+    // 🧩 Check if phone already exists (if provided)
+    if (phone) {
+      const existingPhone = await User.findOne({ phone: phone.trim() });
+      if (existingPhone) {
+        return res.status(400).json({
+          message: 'Phone number already exists. Please use a different number.'
+        });
+      }
+    }
+
+    // 🧩 Role-based permission logic
+    if (LoginRole === 'User') {
+      return res.status(400).json({ message: 'User cannot create new users' });
+    }
+
+    if (LoginRole === 'Admin') {
+      req.body.companyId = LogInUserDetails.companyId;
+    }
+
+    if (LoginRole === 'BranchManager') {
+      req.body.companyId = LogInUserDetails.companyId;
+      req.body.branchId = LogInUserDetails.branchId;
+    }
+
+    // 🧩 Define required fields per role
     const roleRequirements = {
       Admin: ['companyId'],
       BranchManager: ['companyId', 'branchId'],
       User: ['companyId', 'branchId', 'departmentId', 'designationId']
     };
 
-    // Validate role existence
+    // 🧩 Validate role validity
     if (!roleRequirements[role] && role !== 'SuperAdmin') {
       return res.status(400).json({ message: `Invalid role: ${role}` });
     }
 
-    // Check missing role-specific fields
+    // 🧩 Check for missing role-specific fields
     if (roleRequirements[role]) {
       const missingFields = roleRequirements[role].filter(field => !req.body[field]);
       if (missingFields.length > 0) {
         return res.status(400).json({
-          message: `${missingFields.join(', ')} ${
-            missingFields.length > 1 ? 'are' : 'is'
-          } required for ${role} role`
+          message: `${missingFields.join(', ')} ${missingFields.length > 1 ? 'are' : 'is'} required for ${role} role`
         });
       }
     }
 
-    // Check for existing user
-    const existingUser = await User.findOne({
-      $or: [{ email }, { empId }]
-    });
-    if (existingUser) {
-      return res
-        .status(400)
-        .json({ error: 'Email or Employee ID already exists' });
-    }
+    // 🧩 Hash the password before saving
+    // const hashedPassword = await bcrypt.hash(password, 10);
 
-    // Build new user payload dynamically
+    // 🧩 Build new user object
     let newUserData = {
       empId,
       name,
       aliasName,
-      email,
-      phone,
+      email: email.trim().toLowerCase(),
+      phone: phone ? phone.trim() : null,
       gender,
       doj,
       address,
       reportingHead,
-      password,
+      password: password,
       role,
-      status,
+      status: status || 'active',
       createdBy
     };
 
-    // Add role-specific fields
+    // 🧩 Add role-specific fields
     if (roleRequirements[role]) {
       roleRequirements[role].forEach(field => {
         newUserData[field] = req.body[field];
       });
     }
 
-    // Create user
+    // 🧩 Create user in DB
     const newUser = await User.create(newUserData);
 
-    res
-      .status(201)
-      .json({ message: 'User registered successfully', userId: newUser._id });
+    return res.status(201).json({
+      success: true,
+      message: 'User registered successfully',
+      userId: newUser._id
+    });
+
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('Registration Error:', err);
+    return res.status(500).json({
+      success: false,
+      error: err.message || 'Internal Server Error'
+    });
   }
 };
-
 
 // Login
 exports.login = async (req, res) => {
   try {
+    
     const { email, password } = req.body;
+    console.log(password)
     if (!email || !password) return res.status(400).json({ error: 'Email and password are required' });
 
     const user = await User.findOne({ email });
