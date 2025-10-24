@@ -54,7 +54,7 @@ exports.createTask = async (req, res) => {
       attachments,
       createdBy,
       companyId: user.companyId,
-      branchId
+      branchId:project.branchId
     });
 
     await newTask.save();
@@ -95,7 +95,7 @@ exports.getAllTasks = async (req, res) => {
     const tasks = await Task.find(filter)
       .populate('projectId', 'name')
       .populate('assignedTo', 'name email avatar')
-      .populate('departmentId', 'name')
+      // .populate('departmentId', 'name')
       .populate('createdBy', 'name email avatar')
       .populate('lastUpdatedBy', 'name email avatar')
       .populate('parentTaskId', 'title');

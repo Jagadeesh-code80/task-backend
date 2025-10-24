@@ -6,7 +6,7 @@ const taskSchema = new mongoose.Schema({
   assignedTo: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   lastUpdatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
-  departmentId: { type: mongoose.Schema.Types.ObjectId, ref: 'Department' },
+  // departmentId: { type: mongoose.Schema.Types.ObjectId, ref: 'Department' },
   status: { type: String, enum: ['todo', 'in-progress', 'in-review', 'completed', 'blocked'], default: 'todo' },
   priority: { type: String, enum: ['low', 'medium', 'high', 'critical'], default: 'medium' },
   startDate: Date,
