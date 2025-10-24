@@ -52,42 +52,129 @@ exports.createDepartment = async (req, res) => {
   }
 };
 
-// Get All Departments under Company
 exports.getAllDepartments = async (req, res) => {
   try {
-    const createdBy = req.user?.userId;
-    const user = await User.findById(createdBy);
-    if (!user || !user.companyId) {
-      return res.status(403).json({ message: 'User or company not found' });
+    const user = await User.findById(req.user?.userId)
+      .populate("companyId branchId");
+
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
     }
-    const companyId = user.companyId;    const departments = await Department.find({ companyId }).populate('branchId', 'name');
+
+    let departments = [];
+
+    switch (user.role) {
+      case "SuperAdmin":
+        // Can view all active departments
+        departments = await Department.find({ status: "active" })
+          .populate("companyId", "name")
+          .populate("branchId", "name");
+        break;
+
+      case "Admin":
+        // Can view all departments under their company
+        if (!user.companyId) {
+          return res.status(400).json({ message: "Admin not linked to any company" });
+        }
+        departments = await Department.find({
+          companyId: user.companyId,
+          status: "active",
+        })
+          .populate("companyId", "name")
+          .populate("branchId", "name");
+        break;
+
+      case "BranchManager":
+      case "User":
+        // Can view only departments under their branch
+        if (!user.branchId) {
+          return res.status(400).json({ message: "User not linked to any branch" });
+        }
+        departments = await Department.find({
+          branchId: user.branchId,
+          status: "active",
+        })
+          .populate("companyId", "name")
+          .populate("branchId", "name");
+        break;
+
+      default:
+        return res.status(403).json({ message: "Invalid role or no permission" });
+    }
+
     res.status(200).json(departments);
   } catch (err) {
-    console.error('Get All Departments Error:', err);
-    res.status(500).json({ message: 'Internal server error' });
+    console.error("Get All Departments Error:", err);
+    res.status(500).json({ message: "Internal server error" });
   }
 };
-
 // Get Departments by Branch
 exports.getByBranch = async (req, res) => {
   try {
     const { branchId } = req.params;
-    const createdBy = req.user?.userId;
-    const user = await User.findById(createdBy);
-    if (!user || !user.companyId) {
-      return res.status(403).json({ message: 'User or company not found' });
-    }
-    const companyId = user.companyId;
-    const branch = await Branch.findOne({ _id: branchId, companyId });
-    if (!branch) {
-      return res.status(404).json({ message: 'Branch not found under your company' });
+    const user = await User.findById(req.user?.userId)
+      .populate("companyId branchId");
+
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
     }
 
-    const departments = await Department.find({ branchId, companyId });
+    let allowed = false;
+    let query = { branchId, status: "active" };
+
+    switch (user.role) {
+      case "SuperAdmin":
+        // Can access any branch
+        allowed = true;
+        break;
+
+      case "Admin":
+        // Can access only branches within their company
+        if (!user.companyId) {
+          return res.status(400).json({ message: "Admin not linked to any company" });
+        }
+
+        const branch = await Branch.findOne({
+          _id: branchId,
+          companyId: user.companyId,
+          status: "active",
+        });
+
+        if (!branch) {
+          return res.status(404).json({ message: "Branch not found under your company" });
+        }
+
+        query.companyId = user.companyId;
+        allowed = true;
+        break;
+
+      case "BranchManager":
+      case "User":
+        // Can access only their own branch
+        if (!user.branchId || user.branchId.toString() !== branchId) {
+          return res.status(403).json({ message: "Access denied for this branch" });
+        }
+
+        query.companyId = user.companyId;
+        allowed = true;
+        break;
+
+      default:
+        return res.status(403).json({ message: "Invalid role or no permission" });
+    }
+
+    if (!allowed) {
+      return res.status(403).json({ message: "Access denied" });
+    }
+
+    const departments = await Department.find(query)
+      .populate("companyId", "name")
+      .populate("branchId", "name");
+
     res.status(200).json(departments);
   } catch (err) {
-    console.error('Get Departments by Branch Error:', err);
-    res.status(500).json({ message: 'Internal server error' });
+    console.error("Get Departments by Branch Error:", err);
+    res.status(500).json({ message: "Internal server error" });
   }
 };
 

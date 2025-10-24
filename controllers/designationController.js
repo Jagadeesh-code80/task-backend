@@ -66,23 +66,66 @@ exports.createDesignation = async (req, res) => {
 // Get All Designations
 exports.getAllDesignations = async (req, res) => {
   try {
-    const createdBy = req.user?.userId;
-    const user = await User.findById(createdBy);
-    if (!user || !user.companyId) {
-      return res.status(403).json({ message: 'User or company not found' });
-    }
-    const companyId = user.companyId;
+    const user = await User.findById(req.user?.userId)
+      .populate("companyId branchId");
 
-    const designations = await Designation.find({ companyId })
-      .populate('branchId', 'name')
-      .populate('departmentId', 'name');
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    let designations = [];
+
+    switch (user.role) {
+      case "SuperAdmin":
+        // View all designations
+        designations = await Designation.find({ status: "active" })
+          .populate("companyId", "name")
+          .populate("branchId", "name")
+          .populate("departmentId", "name");
+        break;
+
+      case "Admin":
+        // View all designations under company
+        if (!user.companyId) {
+          return res.status(400).json({ message: "Admin not linked to any company" });
+        }
+
+        designations = await Designation.find({
+          companyId: user.companyId,
+          status: "active",
+        })
+          .populate("companyId", "name")
+          .populate("branchId", "name")
+          .populate("departmentId", "name");
+        break;
+
+      case "BranchManager":
+      case "User":
+        // View designations under own branch
+        if (!user.branchId) {
+          return res.status(400).json({ message: "User not linked to any branch" });
+        }
+
+        designations = await Designation.find({
+          branchId: user.branchId,
+          status: "active",
+        })
+          .populate("companyId", "name")
+          .populate("branchId", "name")
+          .populate("departmentId", "name");
+        break;
+
+      default:
+        return res.status(403).json({ message: "Invalid role or no permission" });
+    }
 
     res.status(200).json(designations);
   } catch (err) {
-    console.error('Get All Designations Error:', err);
-    res.status(500).json({ message: 'Internal server error' });
+    console.error("Get All Designations Error:", err);
+    res.status(500).json({ message: "Internal server error" });
   }
 };
+
 
 // Get Designations by Department ID
 exports.getDesignationsByDepartment = async (req, res) => {
@@ -90,29 +133,55 @@ exports.getDesignationsByDepartment = async (req, res) => {
     const { departmentId } = req.params;
 
     if (!departmentId) {
-      return res.status(400).json({ message: 'Department ID is required' });
+      return res.status(400).json({ message: "Department ID is required" });
     }
 
-    const createdBy = req.user?.userId;
-    const user = await User.findById(createdBy);
+    const user = await User.findById(req.user?.userId)
+      .populate("companyId branchId");
 
-    if (!user || !user.companyId) {
-      return res.status(403).json({ message: 'User or company not found' });
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
     }
 
-    const companyId = user.companyId;
+    let query = { departmentId, status: "active" };
 
-    const designations = await Designation.find({ companyId, departmentId })
-      .populate('branchId', 'name')
-      .populate('departmentId', 'name');
+    switch (user.role) {
+      case "SuperAdmin":
+        // No company restriction
+        break;
+
+      case "Admin":
+        if (!user.companyId) {
+          return res.status(400).json({ message: "Admin not linked to any company" });
+        }
+        query.companyId = user.companyId;
+        break;
+
+      case "BranchManager":
+      case "User":
+        if (!user.branchId) {
+          return res.status(400).json({ message: "User not linked to any branch" });
+        }
+
+        query.branchId = user.branchId;
+        query.companyId = user.companyId;
+        break;
+
+      default:
+        return res.status(403).json({ message: "Invalid role or no permission" });
+    }
+
+    const designations = await Designation.find(query)
+      .populate("companyId", "name")
+      .populate("branchId", "name")
+      .populate("departmentId", "name");
 
     res.status(200).json(designations);
   } catch (err) {
-    console.error('Get Designations by Department Error:', err);
-    res.status(500).json({ message: 'Internal server error' });
+    console.error("Get Designations by Department Error:", err);
+    res.status(500).json({ message: "Internal server error" });
   }
 };
-
 
 // Get Designation by ID
 exports.getById = async (req, res) => {

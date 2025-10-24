@@ -40,17 +40,17 @@ const projectSchema = new mongoose.Schema({
     default: 0
   },
 
-  teamLeadId: {
+  teamLeadId: [{
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
     required: true
-  },
+  }],
 
-  managerId: {
+  managerId: [{
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
     required: true
-  },
+  }],
 
   assignedEmployees: [{
     type: mongoose.Schema.Types.ObjectId,

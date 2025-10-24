@@ -55,6 +55,20 @@ exports.register = async (req, res) => {
       }
     }
 
+    // 🧩 Checking EmpID logic
+    if (LoginRole != 'SuperAdmin') {
+      const existingEmpId = await User.findOne({
+        empId: empId.trim(),
+        companyId: LogInUserDetails.companyId,
+      });
+
+      if (existingEmpId) {
+        return res.status(400).json({
+          message: "Employee ID already exists in your company. Please use a different ID.",
+        });
+      }
+    }
+
     // 🧩 Role-based permission logic
     if (LoginRole === 'User') {
       return res.status(400).json({ message: 'User cannot create new users' });
@@ -139,7 +153,7 @@ exports.register = async (req, res) => {
 // Login
 exports.login = async (req, res) => {
   try {
-    
+
     const { email, password } = req.body;
     console.log(password)
     if (!email || !password) return res.status(400).json({ error: 'Email and password are required' });

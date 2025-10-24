@@ -5,40 +5,107 @@ const User = require('../models/User');
 exports.createBranch = async (req, res) => {
   try {
     const createdBy = req.user?.userId;
-    if (!createdBy) return res.status(401).json({ message: 'Unauthorized: Missing user info from token' });
+    if (!createdBy)
+      return res.status(401).json({ message: "Unauthorized: Missing user info from token" });
 
     const currentUser = await User.findById(createdBy);
-    if (!currentUser || currentUser.role !== 'Admin') {
-      return res.status(403).json({ message: 'Only company head can create branches' });
+    if (!currentUser) {
+      return res.status(404).json({ message: "User not found" });
     }
 
-    if (!req.body?.name || !req.body?.code) {
-      return res.status(400).json({ message: 'Branch name and code are required' });
+    // ✅ Only SuperAdmin or Admin can create branches
+    if (!["SuperAdmin", "Admin"].includes(currentUser.role)) {
+      return res.status(403).json({ message: "Only Admin or SuperAdmin can create branches" });
     }
 
-    const newBranch = await Branch.create({
-      name: req.body.name,
-      code: req.body.code,
-      status: req.body.status || 'active',
+    const { name, code, status } = req.body;
+    if (!name || !code) {
+      return res.status(400).json({ message: "Branch name and code are required" });
+    }
+
+    // ✅ Ensure companyId exists
+    if (!currentUser.companyId) {
+      return res.status(400).json({ message: "User is not linked to any company" });
+    }
+
+    // ✅ Check if branch name or code already exists under the same company
+    const existingBranch = await Branch.findOne({
       companyId: currentUser.companyId,
-      createdBy
+      $or: [{ name: name.trim() }, { code: code.trim() }],
     });
 
-    res.status(201).json({ message: 'Branch created successfully', branch: newBranch });
+    if (existingBranch) {
+      const duplicateField =
+        existingBranch.name.toLowerCase() === name.trim().toLowerCase()
+          ? "name"
+          : "code";
+      return res
+        .status(400)
+        .json({ message: `Branch ${duplicateField} already exists under this company` });
+    }
+
+    // ✅ Create new branch
+    const newBranch = await Branch.create({
+      name: name.trim(),
+      code: code.trim(),
+      status: status || "active",
+      companyId: currentUser.companyId,
+      createdBy,
+    });
+
+    res.status(201).json({
+      message: "Branch created successfully",
+      branch: newBranch,
+    });
   } catch (err) {
-    console.error('Create branch error:', err);
+    console.error("Create branch error:", err);
     res.status(500).json({ error: err.message });
   }
 };
+
 
 // Get All Branches (Only from user's company)
 exports.getAllBranches = async (req, res) => {
   try {
     const user = await User.findById(req.user.userId);
-    if (!user?.companyId) return res.status(404).json({ error: 'User not linked to any company' });
+    if (!user) return res.status(404).json({ error: "User not found" });
 
-    const branches = await Branch.find({ companyId: user.companyId, status: 'active' });
-    res.json(branches);
+    let branches;
+
+    switch (user.role) {
+      case "SuperAdmin":
+        // Can see all active branches
+        branches = await Branch.find({ status: "active" }).populate("companyId");
+        break;
+
+      case "Admin":
+        // Can see all branches within their company
+        if (!user.companyId)
+          return res.status(400).json({ error: "Admin not linked to any company" });
+
+        branches = await Branch.find({
+          companyId: user.companyId,
+          status: "active",
+        }).populate("companyId");
+        break;
+
+      case "BranchManager":
+      case "User":
+        // Can see only their branch
+        if (!user.branchId)
+          return res.status(400).json({ error: "User not linked to any branch" });
+
+        branches = await Branch.find({
+          _id: user.branchId,
+          status: "active",
+        }).populate("companyId");
+        break;
+
+      default:
+        return res.status(403).json({ error: "Invalid role or no permission" });
+    }
+
+    res.status(200).json(branches);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -64,17 +131,69 @@ exports.getBranchById = async (req, res) => {
 // Update Branch (Only company_head of same company)
 exports.updateBranch = async (req, res) => {
   try {
-    const user = await User.findById(req.user.userId);
-    const branch = await Branch.findById(req.params.id);
+    const { id } = req.params;
+    const { name, code, status } = req.body;
 
-    if (!branch) return res.status(404).json({ message: 'Branch not found' });
-    if (user.role !== 'Admin' || branch.companyId.toString() !== user.companyId.toString()) {
-      return res.status(403).json({ error: 'Unauthorized to update this branch' });
+    const user = await User.findById(req.user.userId);
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
     }
 
-    const updated = await Branch.findByIdAndUpdate(req.params.id, req.body, { new: true });
-    res.json({ message: 'Branch updated successfully', branch: updated });
+    const branch = await Branch.findById(id);
+    if (!branch) {
+      return res.status(404).json({ message: "Branch not found" });
+    }
+
+    // ✅ Only SuperAdmin or Admin can update
+    if (!["SuperAdmin", "Admin"].includes(user.role)) {
+      return res.status(403).json({ message: "Unauthorized: Only Admin or SuperAdmin can update branches" });
+    }
+
+    // ✅ Admin can only update branches under their company
+    if (user.role === "Admin" && branch.companyId.toString() !== user.companyId.toString()) {
+      return res.status(403).json({ message: "You are not authorized to update this branch" });
+    }
+
+    // ✅ Check for duplicate branch name or code under same company (excluding self)
+    if (name || code) {
+      const existingBranch = await Branch.findOne({
+        companyId: branch.companyId,
+        _id: { $ne: branch._id },
+        $or: [
+          name ? { name: name.trim() } : {},
+          code ? { code: code.trim() } : {},
+        ],
+      });
+
+      if (existingBranch) {
+        const duplicateField =
+          existingBranch.name.toLowerCase() === name?.trim().toLowerCase()
+            ? "name"
+            : "code";
+        return res.status(400).json({
+          message: `Branch ${duplicateField} already exists under this company`,
+        });
+      }
+    }
+
+    // ✅ Perform update safely
+    const updatedBranch = await Branch.findByIdAndUpdate(
+      id,
+      {
+        ...(name && { name: name.trim() }),
+        ...(code && { code: code.trim() }),
+        ...(status && { status }),
+        updatedAt: new Date(),
+      },
+      { new: true }
+    );
+
+    res.status(200).json({
+      message: "Branch updated successfully",
+      branch: updatedBranch,
+    });
   } catch (err) {
+    console.error("Update branch error:", err);
     res.status(500).json({ error: err.message });
   }
 };
