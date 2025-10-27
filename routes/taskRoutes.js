@@ -13,8 +13,7 @@ router.get('/:id', taskController.getTaskById);
 router.put('/:id', taskController.updateTask);
 router.delete('/:id', taskController.deleteTask);
 router.post('/toggle', taskController.toggleTaskLog);
-router.get("/logs", taskController.getAllTaskLogs);
+router.get("/logs/all", taskController.getAllLogs);
 
-router.get("/logs/:taskId", taskController.getTaskLogsByTask);
 
 module.exports = router;

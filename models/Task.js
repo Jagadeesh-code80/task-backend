@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+
 const taskSchema = new mongoose.Schema({
   title: { type: String, required: true, trim: true },
   description: { type: String, trim: true },
@@ -6,14 +7,14 @@ const taskSchema = new mongoose.Schema({
   assignedTo: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   lastUpdatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
-  // departmentId: { type: mongoose.Schema.Types.ObjectId, ref: 'Department' },
   status: { type: String, enum: ['todo', 'in-progress', 'in-review', 'completed', 'blocked'], default: 'todo' },
   priority: { type: String, enum: ['low', 'medium', 'high', 'critical'], default: 'medium' },
   startDate: Date,
   dueDate: Date,
   completedDate: Date,
- estimatedHours: { type: String, trim: true },  // e.g. "05:00"
-  actualHours: { type: String, trim: true },     // e.g. "02:35"
+  estimatedHours: { type: String, trim: true },
+  actualHours: { type: String, trim: true },
+  workedHours: { type: String, trim: true },
   progress: { type: Number, min: 0, max: 100, default: 0 },
   parentTaskId: { type: mongoose.Schema.Types.ObjectId, ref: 'Task', default: null },
   attachments: [{ fileUrl: String, fileName: String }],
