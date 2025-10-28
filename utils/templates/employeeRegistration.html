@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Welcome to {{companyName}}</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      background-color: #f4f6f8;
+      font-family: 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      color: #333;
+    }
+    .email-wrapper {
+      max-width: 650px;
+      margin: 30px auto;
+      background: #fff;
+      border-radius: 10px;
+      box-shadow: 0 5px 18px rgba(0, 0, 0, 0.08);
+      overflow: hidden;
+    }
+    .header {
+      background: linear-gradient(135deg, #0078d4, #005fa3);
+      color: #fff;
+      text-align: center;
+      padding: 35px 20px 25px 20px;
+    }
+    .header h1 {
+      font-size: 24px;
+      margin: 0;
+      font-weight: 600;
+    }
+    .header p {
+      margin-top: 6px;
+      font-size: 15px;
+      opacity: 0.9;
+    }
+    .content {
+      padding: 30px 40px;
+      line-height: 1.6;
+    }
+    .content h2 {
+      color: #0078d4;
+      font-size: 20px;
+      margin-bottom: 15px;
+      font-weight: 600;
+    }
+    .details-card {
+      background-color: #f8fafc;
+      border-radius: 8px;
+      padding: 20px 25px;
+      margin: 20px 0;
+      border: 1px solid #e2e8f0;
+    }
+    .btn-container {
+      text-align: center;
+      margin: 30px 0 10px 0;
+    }
+    .btn {
+      background-color: #0078d4;
+      color: #fff !important;
+      text-decoration: none;
+      padding: 12px 30px;
+      border-radius: 6px;
+      font-weight: 600;
+      display: inline-block;
+      transition: all 0.2s ease-in-out;
+    }
+    .btn:hover {
+      background-color: #005fa3;
+    }
+    .note {
+      font-size: 13px;
+      color: #888;
+      background: #f9fafb;
+      border-radius: 5px;
+      padding: 10px 12px;
+      margin-top: 20px;
+      line-height: 1.4;
+    }
+    .footer {
+      background: #f8fafc;
+      text-align: center;
+      padding: 18px;
+      font-size: 13px;
+      color: #777;
+      border-top: 1px solid #e5e7eb;
+    }
+    @media (max-width: 600px) {
+      .content {
+        padding: 20px;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <div class="email-wrapper">
+    <div class="header">
+      <h1>Welcome to {{companyName}}</h1>
+      <p>Your account has been successfully created</p>
+    </div>
+
+    <div class="content">
+      <p>Dear <strong>{{employeeName}}</strong>,</p>
+      <p>We're delighted to welcome you to <strong>{{companyName}}</strong>. Below are your login credentials and organization details.</p>
+
+      <div class="details-card">
+        <p style="margin-bottom: 15px;">
+          You have been assigned Employee ID<strong> {{empId}}</strong> 
+          {{#if designationName}}
+            and will be working as a <strong>{{designationName}}</strong>
+          {{/if}}
+          {{#if departmentName}}
+            in the <strong>{{departmentName}}</strong> department
+          {{/if}}
+          at our <strong>{{branchName}}</strong> location.
+        </p>
+
+        <p style="margin-bottom: 15px;">
+          Your login credentials are as follows: use <strong>{{email}}</strong> as your username 
+          and <strong style="color: #0078d4;">{{password}}</strong> as your temporary password. 
+          You have been assigned the role of <strong>{{role}}</strong> in our system.
+        </p>
+
+        <p style="margin-bottom: 0;">
+          Your account was created on <strong>{{registeredOn}}</strong>. Please log in at your earliest 
+          convenience to complete your profile setup.
+        </p>
+      </div>
+
+      <div class="note">
+        <strong>Note:</strong> Please do not share your password with anyone. You can update your password after your first login.
+      </div>
+
+      <div class="btn-container">
+        <a href="{{loginUrl}}" class="btn">Login to Dashboard</a>
+      </div>
+
+      <p style="margin-top: 25px;">
+        If you have any questions, feel free to reach out to 
+        <a href="mailto:{{supportEmail}}">{{supportEmail}}</a>.
+      </p>
+
+      <p>Welcome aboard,<br><strong>The {{companyName}} Team</strong></p>
+    </div>
+
+    <div class="footer">
+      &copy; {{year}} {{companyName}} | All rights reserved.
+    </div>
+  </div>
+</body>
+</html>

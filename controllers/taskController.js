@@ -3,9 +3,10 @@ const TaskLog = require('../models/TaskLog');
 const User = require('../models/User');
 const Project = require('../models/Project');
 const mongoose = require('mongoose');
+const moment = require('moment');
+const {sendMail} = require('../utils/sendEmail');
 
-
-// Create Task
+// Create or Create Subtask
 exports.createTask = async (req, res) => {
   try {
     const createdBy = req.user?.userId;
@@ -29,12 +30,10 @@ exports.createTask = async (req, res) => {
       actualHours,
       progress,
       parentTaskId,
-      attachments,
-      branchId // now taken from request body
+      attachments
     } = req.body;
 
-    // Validate project
-    const project = await Project.findById(projectId);
+    const project = await Project.findById(projectId).populate('companyId', 'name');
     if (!project) {
       return res.status(400).json({ message: 'Invalid project ID' });
     }
@@ -52,25 +51,57 @@ exports.createTask = async (req, res) => {
       estimatedHours,
       actualHours,
       progress,
-      parentTaskId,
+      parentTaskId: parentTaskId || null,
       attachments,
       createdBy,
       companyId: user.companyId,
-      branchId:project.branchId
+      branchId: project.branchId
     });
 
     await newTask.save();
 
+    // ✅ If subtask, link it to its parent
+    if (parentTaskId) {
+      await Task.findByIdAndUpdate(parentTaskId, { $push: { subTasks: newTask._id } });
+    }
+
+    // ✅ Send Email Notification to Assigned Employees
+    if (assignedTo && assignedTo.length > 0) {
+      const assignedUsers = await User.find({ _id: { $in: assignedTo } });
+
+      for (const assignee of assignedUsers) {
+        const emailContext = {
+          companyName: project.companyId?.name || 'Task Management',
+          employeeName: assignee.name || assignee.email.split('@')[0],
+          taskTitle: title,
+          projectName: project.name,
+          assignedBy: user.name || 'Project Manager',
+          description: description || 'No description provided.',
+          priority: priority || 'Normal',
+          startDate: startDate ? moment(startDate).format('MMMM Do YYYY') : 'Not specified',
+          dueDate: dueDate ? moment(dueDate).format('MMMM Do YYYY') : 'Not specified',
+          dashboardUrl: `${process.env.APP_URL}/tasks`,
+          supportEmail: process.env.SUPPORT_EMAIL || 'support@company.com',
+          subject: `New Task Assigned: ${title}`,
+          year: new Date().getFullYear(),
+        };
+
+        await sendMail(assignee.email, emailContext.subject, 'taskAssigned', emailContext);
+      }
+    }
+
     res.status(201).json({
       success: true,
-      message: 'Task created successfully',
+      message: parentTaskId ? 'Subtask created successfully and email sent' : 'Task created successfully and email sent',
       task: newTask
     });
+
   } catch (err) {
     console.error('Create Task Error:', err);
     res.status(500).json({ message: 'Internal server error' });
   }
 };
+
 
 // Get All Tasks (Role-based access)
 exports.getAllTasks = async (req, res) => {

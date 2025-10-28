@@ -1,18 +1,19 @@
 const Project = require('../models/Project');
 const User = require('../models/User');
+const moment = require('moment');
+const {sendMail} = require('../utils/sendEmail');
 
-// Create Project
+// Create Project + Send Notification Email
 exports.createProject = async (req, res) => {
   try {
     const createdBy = req.user?.userId;
-    const user = await User.findById(createdBy);
-    console.log(user)
+    const user = await User.findById(createdBy).populate('companyId', 'name');
 
     if (!user || !user.companyId) {
       return res.status(403).json({ message: 'Invalid user or missing company/branch details' });
     }
 
-    // Only allow Admin and BranchManager
+    // Only Admin and BranchManager can create projects
     if (!['Admin', 'BranchManager'].includes(user.role)) {
       return res.status(403).json({ message: 'Access denied: Only Admin and BranchManager can create projects' });
     }
@@ -29,11 +30,12 @@ exports.createProject = async (req, res) => {
       managerId,
       branchId,
       assignedEmployees,
-      departmentIds, // now supports multiple
+      departmentIds,
       technologies,
       attachments
     } = req.body;
 
+    // Create project
     const newProject = new Project({
       name,
       description,
@@ -46,7 +48,7 @@ exports.createProject = async (req, res) => {
       managerId,
       assignedEmployees,
       companyId: user.companyId,
-      branchId: branchId,
+      branchId,
       departmentIds,
       technologies,
       attachments,
@@ -55,9 +57,32 @@ exports.createProject = async (req, res) => {
 
     await newProject.save();
 
+    // ✅ Notify all assigned employees via email
+    if (assignedEmployees && assignedEmployees.length > 0) {
+      const employees = await User.find({ _id: { $in: assignedEmployees } }).populate('companyId', 'name');
+
+      for (const emp of employees) {
+        const emailContext = {
+          companyName: user.companyId?.name || 'Task Management',
+          employeeName: emp.name || emp.email.split('@')[0],
+          projectName: newProject.name,
+          description: newProject.description,
+          priority: newProject.priority,
+          startDate: moment(newProject.startDate).format('MMMM Do YYYY'),
+          endDate: moment(newProject.endDate).format('MMMM Do YYYY'),
+          assignedBy: user.name || 'Admin',
+          dashboardUrl: `${process.env.APP_URL}`,
+          subject: `You’ve been added to a new project: ${newProject.name}`,
+          year: new Date().getFullYear(),
+        };
+
+        await sendMail(emp.email, emailContext.subject, 'projectAssigned', emailContext);
+      }
+    }
+
     res.status(201).json({
       success: true,
-      message: 'Project created successfully',
+      message: 'Project created successfully and assigned employees notified',
       project: newProject
     });
 

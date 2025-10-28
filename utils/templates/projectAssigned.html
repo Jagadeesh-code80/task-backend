@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>New Project Assigned - {{companyName}}</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      background-color: #f4f6f8;
+      font-family: 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      color: #333;
+    }
+    .email-wrapper {
+      max-width: 650px;
+      margin: 30px auto;
+      background: #fff;
+      border-radius: 10px;
+      box-shadow: 0 5px 18px rgba(0, 0, 0, 0.08);
+      overflow: hidden;
+    }
+    .header {
+      background: linear-gradient(135deg, #0078d4, #005fa3);
+      color: #fff;
+      text-align: center;
+      padding: 35px 20px 25px 20px;
+    }
+    .header h1 {
+      font-size: 24px;
+      margin: 0;
+      font-weight: 600;
+    }
+    .header p {
+      margin-top: 6px;
+      font-size: 15px;
+      opacity: 0.9;
+    }
+    .content {
+      padding: 30px 40px;
+      line-height: 1.6;
+    }
+    .content h2 {
+      color: #0078d4;
+      font-size: 20px;
+      margin-bottom: 15px;
+      font-weight: 600;
+    }
+    .details-card {
+      background-color: #f8fafc;
+      border-radius: 8px;
+      padding: 20px 25px;
+      margin: 20px 0;
+      border: 1px solid #e2e8f0;
+    }
+    .btn-container {
+      text-align: center;
+      margin: 30px 0 10px 0;
+    }
+    .btn {
+      background-color: #0078d4;
+      color: #fff !important;
+      text-decoration: none;
+      padding: 12px 30px;
+      border-radius: 6px;
+      font-weight: 600;
+      display: inline-block;
+      transition: all 0.2s ease-in-out;
+    }
+    .btn:hover {
+      background-color: #005fa3;
+    }
+    .note {
+      font-size: 13px;
+      color: #888;
+      background: #f9fafb;
+      border-radius: 5px;
+      padding: 10px 12px;
+      margin-top: 20px;
+      line-height: 1.4;
+    }
+    .footer {
+      background: #f8fafc;
+      text-align: center;
+      padding: 18px;
+      font-size: 13px;
+      color: #777;
+      border-top: 1px solid #e5e7eb;
+    }
+    @media (max-width: 600px) {
+      .content {
+        padding: 20px;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <div class="email-wrapper">
+    <div class="header">
+      <h1>{{companyName}}</h1>
+      <p>New Project Assigned</p>
+    </div>
+
+    <div class="content">
+      <p>Dear <strong>{{employeeName}}</strong>,</p>
+      <p>
+        You have been added to a new project titled <strong>"{{projectName}}"</strong>, 
+        assigned by <strong>{{assignedBy}}</strong>. Please review the project details below.
+      </p>
+
+      <div class="details-card">
+        <p><strong>Project Description:</strong> {{description}}</p>
+        <p><strong>Priority:</strong> {{priority}}</p>
+        <p><strong>Start Date:</strong> {{startDate}}</p>
+        <p><strong>End Date:</strong> {{endDate}}</p>
+        {{#if technologies}}
+        <p><strong>Technologies:</strong> {{technologies}}</p>
+        {{/if}}
+        {{#if branchName}}
+        <p><strong>Branch:</strong> {{branchName}}</p>
+        {{/if}}
+      </div>
+
+      <div class="note">
+        <strong>Note:</strong> You can track project progress and assigned tasks directly from your dashboard.
+      </div>
+
+      <div class="btn-container">
+        <a href="{{dashboardUrl}}" class="btn">View Project</a>
+      </div>
+
+      <p style="margin-top: 25px;">
+        If you have any questions, please contact your project manager or 
+        <a href="mailto:{{supportEmail}}">{{supportEmail}}</a>.
+      </p>
+
+      <p>Best regards,<br><strong>The {{companyName}} Team</strong></p>
+    </div>
+
+    <div class="footer">
+      &copy; {{year}} {{companyName}} | All rights reserved.
+    </div>
+  </div>
+</body>
+</html>

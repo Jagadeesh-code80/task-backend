@@ -57,7 +57,12 @@ const userSchema = new mongoose.Schema({
     type: String,
     required: true
   },
-
+  resetToken: {
+    type: String,
+  },
+  resetTokenExpires: {
+    type: Date,
+  },
   role: {
     type: String,
     enum: ['SuperAdmin', 'Admin', 'BranchManager', 'User'],

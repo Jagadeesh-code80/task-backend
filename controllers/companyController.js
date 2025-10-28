@@ -1,14 +1,16 @@
 const Company = require('../models/Company');
 const User = require('../models/User');
+const { sendMail } = require('../utils/sendEmail');
+const moment = require('moment');
 
-// CREATE company with head user
 exports.createCompany = async (req, res) => {
   try {
-    // Extract createdBy from authenticated token
+    // 1️⃣ Extract createdBy from authenticated token
     const createdBy = req.user?.userId;
-    if (!createdBy) return res.status(401).json({ error: 'Unauthorized: Missing user info from token' });
+    if (!createdBy)
+      return res.status(401).json({ error: 'Unauthorized: Missing user info from token' });
 
-    // Parse form-encoded (flat) or JSON (nested) structure
+    // 2️⃣ Support both JSON (nested) and form-data (flat)
     const isNested = typeof req.body.company === 'object' && typeof req.body.head === 'object';
 
     const company = isNested
@@ -24,10 +26,12 @@ exports.createCompany = async (req, res) => {
           name: req.body.head_name,
           email: req.body.head_email,
           phone: req.body.head_phone,
-          password: req.body.head_password
+          password: req.body.head_password,
+          role: req.body.head_role,
+          empId: req.body.head_empId
         };
 
-    // Validate required fields
+    // 3️⃣ Validate required fields
     if (!company?.name) return res.status(400).json({ error: 'Company name is required' });
     if (!head?.name) return res.status(400).json({ error: 'Head user name is required' });
     if (!head?.email) return res.status(400).json({ error: 'Head user email is required' });
@@ -36,15 +40,14 @@ exports.createCompany = async (req, res) => {
     if (!head?.empId) return res.status(400).json({ error: 'Head user ID is required' });
     if (!head?.password) return res.status(400).json({ error: 'Head user password is required' });
 
-    // Check if email exists
+    // 4️⃣ Check if head email already exists
     const existing = await User.findOne({ email: head.email });
     if (existing) return res.status(400).json({ error: 'Email is already registered' });
 
-
-    // Create head user
+    // 5️⃣ Create head user
     const headUser = await User.create({
       name: head.name,
-        empId: head.empId,
+      empId: head.empId,
       role: head.role,
       email: head.email,
       phone: head.phone,
@@ -52,30 +55,49 @@ exports.createCompany = async (req, res) => {
       createdBy: createdBy
     });
 
-    // Create company
+    // 6️⃣ Create company
     const newCompany = await Company.create({
       name: company.name,
-    
       headId: headUser._id,
       createdBy: createdBy,
       status: company.status || 'active'
     });
 
-    // Link user to company
+    // 7️⃣ Link user to company
     headUser.companyId = newCompany._id;
     await headUser.save();
 
+    // 8️⃣ Prepare email context (data for template)
+    const emailContext = {
+  companyName: newCompany.name,
+  contactName: headUser.name,
+  companyId: newCompany._id.toString(),
+  shortCode: newCompany.shortCode || 'N/A',
+  registeredOn: moment().format('MMMM Do YYYY, h:mm:ss a'),
+  dashboardUrl: `${process.env.APP_URL}`,
+  loginEmail: headUser.email,
+  loginPassword: head.password,
+  empId: headUser.empId,
+  phone: headUser.phone,
+  subject: `Welcome to Task Management - ${newCompany.name} Registered Successfully`,
+  year: new Date().getFullYear()
+};
+
+    // 9️⃣ Send email (await or queue)
+await sendMail(headUser.email, emailContext.subject, 'companyRegistration', emailContext);
+    // 🔟 Return success response
     res.status(201).json({
-      message: 'Company created successfully',
-      userId: headUser._id,
-      companyId: newCompany._id
+      message: 'Company created successfully and email sent',
+      companyId: newCompany._id,
+      userId: headUser._id
     });
 
   } catch (err) {
-    console.error('Create company error:', err);
+    console.error('❌ Create company error:', err);
     res.status(500).json({ error: err.message });
   }
 };
+
 
 
 // GET all companies

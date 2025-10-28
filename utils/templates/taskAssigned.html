@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>New Task Assigned - {{companyName}}</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      background-color: #f4f6f8;
+      font-family: 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      color: #333;
+    }
+    .email-wrapper {
+      max-width: 650px;
+      margin: 30px auto;
+      background: #fff;
+      border-radius: 10px;
+      box-shadow: 0 5px 18px rgba(0, 0, 0, 0.08);
+      overflow: hidden;
+    }
+    .header {
+      background: linear-gradient(135deg, #0078d4, #005fa3);
+      color: #fff;
+      text-align: center;
+      padding: 35px 20px 25px 20px;
+    }
+    .header h1 {
+      font-size: 24px;
+      margin: 0;
+      font-weight: 600;
+    }
+    .header p {
+      margin-top: 6px;
+      font-size: 15px;
+      opacity: 0.9;
+    }
+    .content {
+      padding: 30px 40px;
+      line-height: 1.6;
+    }
+    .details-card {
+      background-color: #f8fafc;
+      border-radius: 8px;
+      padding: 20px 25px;
+      margin: 20px 0;
+      border: 1px solid #e2e8f0;
+    }
+    .btn-container {
+      text-align: center;
+      margin: 30px 0 10px 0;
+    }
+    .btn {
+      background-color: #0078d4;
+      color: #fff !important;
+      text-decoration: none;
+      padding: 12px 30px;
+      border-radius: 6px;
+      font-weight: 600;
+      display: inline-block;
+      transition: all 0.2s ease-in-out;
+    }
+    .btn:hover {
+      background-color: #005fa3;
+    }
+    .footer {
+      background: #f8fafc;
+      text-align: center;
+      padding: 18px;
+      font-size: 13px;
+      color: #777;
+      border-top: 1px solid #e5e7eb;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="email-wrapper">
+    <div class="header">
+      <h1>{{companyName}}</h1>
+      <p>New Task Assigned</p>
+    </div>
+
+    <div class="content">
+      <p>Dear <strong>{{employeeName}}</strong>,</p>
+      <p>
+        You have been assigned a new {{#if parentTaskId}}subtask{{else}}task{{/if}} titled 
+        <strong>"{{taskTitle}}"</strong> under the project <strong>{{projectName}}</strong> 
+        by <strong>{{assignedBy}}</strong>.
+      </p>
+
+      <div class="details-card">
+        <p><strong>Description:</strong> {{description}}</p>
+        <p><strong>Priority:</strong> {{priority}}</p>
+        <p><strong>Start Date:</strong> {{startDate}}</p>
+        <p><strong>Due Date:</strong> {{dueDate}}</p>
+      </div>
+
+      <p>You can view and manage this task in your dashboard:</p>
+      <div class="btn-container">
+        <a href="{{dashboardUrl}}" class="btn">View Task</a>
+      </div>
+
+      <p>Good luck and stay productive!<br><strong>The {{companyName}} Team</strong></p>
+    </div>
+
+    <div class="footer">
+      &copy; {{year}} {{companyName}} | All rights reserved.
+    </div>
+  </div>
+</body>
+</html>

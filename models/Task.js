@@ -17,6 +17,7 @@ const taskSchema = new mongoose.Schema({
   workedHours: { type: String, trim: true },
   progress: { type: Number, min: 0, max: 100, default: 0 },
   parentTaskId: { type: mongoose.Schema.Types.ObjectId, ref: 'Task', default: null },
+  subTasks: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Task' }], // ✅ add this
   attachments: [{ fileUrl: String, fileName: String }],
   comments: [{
     userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },

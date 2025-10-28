@@ -1,7 +1,13 @@
 const User = require('../models/User');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
-
+const crypto = require('crypto');
+const moment = require('moment');
+const {sendMail} = require('../utils/sendEmail');
+const Designation = require('../models/Designation');
+const Branch = require('../models/Branch');
+const Department = require('../models/Department');
+const Company = require('../models/Company');
 
 // Full User Registration Controller
 exports.register = async (req, res) => {
@@ -135,6 +141,52 @@ exports.register = async (req, res) => {
     // 🧩 Create user in DB
     const newUser = await User.create(newUserData);
 
+    // 🧩 Fetch related info dynamically (in parallel where applicable)
+const [
+  company,
+  branch,
+  department,
+  designation
+] = await Promise.all([
+  Company.findById(newUser.companyId),
+  Branch.findById(newUser.branchId),
+  newUser.departmentId ? Department.findById(newUser.departmentId) : null,
+  newUser.designationId ? Designation.findById(newUser.designationId) : null
+]);
+
+// 🧩 Prepare email context (auto-handles missing dept/designation)
+const emailContext = {
+  employeeName: newUser.name,
+  empId: newUser.empId,
+  email: newUser.email,
+  password: password, // ⚠️ include only if needed
+  companyName: company?.name ?? 'N/A',
+  branchName: branch?.name ?? 'N/A',
+  departmentName: department?.name ?? 'Not Applicable',
+  designationName: designation?.name ?? 'Not Applicable',
+  role: newUser.role,
+  subject: `Welcome to ${company?.name ?? 'Your Organization'} - Your Account Details`,
+  registeredOn: new Date().toLocaleString('en-IN', { 
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  }),
+  loginUrl: process.env.APP_URL,
+  supportEmail: 'support@onobar.com',
+  year: new Date().getFullYear()
+};
+
+// 🧩 Send registration email
+await sendMail(
+  newUser.email,
+  emailContext.subject,
+  'employeeRegistration', // template name (employeeRegistration.html)
+  emailContext
+);
+
     return res.status(201).json({
       success: true,
       message: 'User registered successfully',
@@ -238,3 +290,94 @@ exports.updateProfile = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
+
+
+// Forget Password
+exports.forgotPassword = async (req, res) => {
+  try {
+    const { email } = req.body;
+        if (!email) {
+      return res.status(404).json({ message: 'email is required.' });
+    }
+    const user = await User.findOne({ email }).populate('companyId', 'name'); // populate company name
+
+
+    if (!user) {
+      return res.status(404).json({ message: 'No account found with this email.' });
+    }
+
+    // Generate token
+    const resetToken = crypto.randomBytes(32).toString('hex');
+    const tokenExpiry = Date.now() + 15 * 60 * 1000; // 15 mins
+    user.resetToken = resetToken;
+    user.resetTokenExpires = tokenExpiry;
+await user.save({ validateBeforeSave: false });
+
+    const resetLink = `${process.env.APP_URL}/reset-password/${resetToken}`;
+
+    // ✅ Dynamic company name
+    const companyName = user.companyId?.name || 'Task Management';
+   
+    const emailContext = {
+      companyName,
+      name: user.name || user.email.split('@')[0],
+      resetLink,
+      requestedOn: moment().format('MMMM Do YYYY, h:mm:ss a'),
+      subject: `Password Reset Request - ${companyName}`,
+      year: new Date().getFullYear(),
+    };
+
+    await sendMail(user.email, emailContext.subject, 'resetPassword', emailContext);
+
+    return res.status(200).json({ message: 'Password reset email sent successfully.' });
+  } catch (err) {
+    console.error('Forgot password error:', err);
+    res.status(500).json({ message: 'Internal Server Error' });
+  }
+};
+
+// Reset Password
+exports.resetPassword = async (req, res) => {
+  try {
+    const { token } = req.params;
+    const { password } = req.body;
+    if (!password) {
+      return res.status(404).json({ message: 'Password is required.' });
+    }
+    const user = await User.findOne({
+      resetToken: token,
+      resetTokenExpires: { $gt: Date.now() },
+    }).populate('companyId', 'name');
+
+    if (!user) {
+      return res.status(400).json({ message: 'Invalid or expired reset token.' });
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+    user.password = hashedPassword;
+    user.resetToken = undefined;
+    user.resetTokenExpires = undefined;
+await user.save({ validateBeforeSave: false });
+
+    const companyName = user.companyId?.name || 'Task Management';
+
+const emailContext = {
+  companyName: user.companyId?.name || 'Task Management',
+  contactName: user.name || user.email.split('@')[0],
+  resetTime: moment().format('MMMM Do YYYY, h:mm:ss a'),
+  userEmail: user.email,
+  dashboardUrl: `${process.env.APP_URL}`,
+  subject: `Your Password Has Been Reset Successfully - ${companyName}`,
+  year: new Date().getFullYear(),
+};
+
+
+await sendMail(user.email, emailContext.subject, 'passwordResetSuccess', emailContext);
+
+    return res.status(200).json({ message: 'Password reset successful and confirmation email sent.' });
+  } catch (err) {
+    console.error('Reset password error:', err);
+    res.status(500).json({ message: 'Internal Server Error' });
+  }
+};
+
