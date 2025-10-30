@@ -103,7 +103,7 @@ exports.createTask = async (req, res) => {
 };
 
 
-// Get All Tasks (Role-based access)
+// Get All Tasks (Role-based access + nested subtasks + parent inclusion)
 exports.getAllTasks = async (req, res) => {
   try {
     const userId = req.user?.userId;
@@ -114,31 +114,92 @@ exports.getAllTasks = async (req, res) => {
 
     let filter = {};
 
+    // Role-based filters
     if (user.role === 'Admin') {
       filter.companyId = user.companyId;
     } else if (user.role === 'BranchManager') {
       filter.branchId = user.branchId;
     } else {
+      // For regular users — find tasks created by or assigned to the user
       filter.$or = [
         { createdBy: userId },
         { assignedTo: userId }
       ];
     }
 
-    const tasks = await Task.find(filter)
+    // Recursive function to fetch subtasks
+    const fetchSubtasks = async (parentId, user) => {
+      let subFilter = { parentTaskId: parentId };
+
+      // Apply same role-based filter to subtasks
+      if (user.role === 'Admin') subFilter.companyId = user.companyId;
+      else if (user.role === 'BranchManager') subFilter.branchId = user.branchId;
+      else subFilter.$or = [{ createdBy: user._id }, { assignedTo: user._id }];
+
+      const subtasks = await Task.find(subFilter)
+        .populate('projectId', 'name')
+        .populate('assignedTo', 'name email avatar')
+        .populate('createdBy', 'name email avatar')
+        .populate('lastUpdatedBy', 'name email avatar')
+        .populate('parentTaskId', 'title')
+        .sort({ updatedAt: -1 })
+        .lean();
+
+      for (let subtask of subtasks) {
+        subtask.subtasks = await fetchSubtasks(subtask._id, user);
+      }
+      return subtasks;
+    };
+
+    // STEP 1: find all tasks directly visible to the user
+    const visibleTasks = await Task.find(filter)
       .populate('projectId', 'name')
       .populate('assignedTo', 'name email avatar')
-      // .populate('departmentId', 'name')
       .populate('createdBy', 'name email avatar')
       .populate('lastUpdatedBy', 'name email avatar')
-      .populate('parentTaskId', 'title');
+      .populate('parentTaskId', 'title')
+      .sort({ updatedAt: -1 })
+      .lean();
 
-    res.status(200).json({ count: tasks.length, tasks });
+    // STEP 2: collect parent IDs for any subtasks they have
+    const parentIds = visibleTasks
+      .filter(t => t.parentTaskId)
+      .map(t => t.parentTaskId?._id)
+      .filter(Boolean);
+
+    // STEP 3: include parent tasks for those subtasks
+    const parentTasks = await Task.find({ _id: { $in: parentIds } })
+      .populate('projectId', 'name')
+      .populate('assignedTo', 'name email avatar')
+      .populate('createdBy', 'name email avatar')
+      .populate('lastUpdatedBy', 'name email avatar')
+      .lean();
+
+    // Combine and remove duplicates
+    const allTasks = [...visibleTasks, ...parentTasks];
+    const uniqueTasks = Object.values(
+      allTasks.reduce((acc, t) => ({ ...acc, [t._id]: t }), {})
+    );
+
+    // STEP 4: Only include top-level tasks (no parent)
+    const topLevelTasks = uniqueTasks.filter(t => !t.parentTaskId);
+
+    // STEP 5: attach subtasks recursively
+    for (let task of topLevelTasks) {
+      task.subtasks = await fetchSubtasks(task._id, user);
+    }
+
+    res.status(200).json({
+      count: topLevelTasks.length,
+      tasks: topLevelTasks
+    });
+
   } catch (err) {
     console.error('Get All Tasks Error:', err);
     res.status(500).json({ message: 'Internal server error' });
   }
 };
+
 
 // Get Task by ID
 exports.getTaskById = async (req, res) => {
@@ -440,6 +501,223 @@ exports.getAllLogs = async (req, res) => {
   }
 };
 
+exports.getAttendance = async (req, res) => {
+  try {
+    const userId = req.user?.userId;
+    const {
+      employeeId,
+      branchId,
+      deptId,
+      designationId,
+      fromDate,
+      toDate
+    } = req.query;
+
+    const user = await User.findById(userId).lean();
+    if (!user || !user.role) {
+      return res.status(403).json({ message: 'Unauthorized access' });
+    }
+
+    // 🗓️ Date range
+    let startDate, endDate;
+    if (fromDate && toDate) {
+      startDate = new Date(fromDate);
+      endDate = new Date(toDate);
+      endDate.setHours(23, 59, 59, 999);
+    } else {
+      const today = new Date();
+      startDate = new Date(today.setHours(0, 0, 0, 0));
+      endDate = new Date(today.setHours(23, 59, 59, 999));
+    }
+
+    // 🧩 Parse comma-separated IDs
+    const parseIds = (param) =>
+      param ? param.split(',').map((id) => new mongoose.Types.ObjectId(id.trim())) : [];
+
+    const branchIds = parseIds(branchId);
+    const deptIds = parseIds(deptId);
+    const designationIds = parseIds(designationId);
+    const employeeIds = parseIds(employeeId);
+
+    // 🧩 Role-based filter
+    const matchStage = { createdAt: { $gte: startDate, $lte: endDate } };
+
+    if (user.role === 'Admin') {
+      matchStage['task.companyId'] = new mongoose.Types.ObjectId(user.companyId);
+    } else if (user.role === 'BranchManager') {
+      matchStage['task.branchId'] = new mongoose.Types.ObjectId(user.branchId);
+    } else {
+      matchStage['userId'] = new mongoose.Types.ObjectId(userId);
+    }
+
+    // 🧩 Extra filters
+    if (employeeIds.length) matchStage['userId'] = { $in: employeeIds };
+    if (branchIds.length) matchStage['task.branchId'] = { $in: branchIds };
+    if (deptIds.length) matchStage['user.departmentId'] = { $in: deptIds };
+    if (designationIds.length) matchStage['user.designationId'] = { $in: designationIds };
+
+    // 🧮 Aggregate daily logs
+    const logs = await TaskLog.aggregate([
+      {
+        $lookup: {
+          from: 'tasks',
+          localField: 'taskId',
+          foreignField: '_id',
+          as: 'task'
+        }
+      },
+      { $unwind: '$task' },
+      {
+        $lookup: {
+          from: 'users',
+          localField: 'userId',
+          foreignField: '_id',
+          as: 'user'
+        }
+      },
+      { $unwind: '$user' },
+      { $match: matchStage },
+      {
+        $addFields: {
+          workedSeconds: {
+            $let: {
+              vars: { parts: { $split: ['$workedHours', ':'] } },
+              in: {
+                $add: [
+                  { $multiply: [{ $toInt: { $arrayElemAt: ['$$parts', 0] } }, 3600] },
+                  { $multiply: [{ $toInt: { $arrayElemAt: ['$$parts', 1] } }, 60] },
+                  { $toInt: { $arrayElemAt: ['$$parts', 2] } }
+                ]
+              }
+            }
+          }
+        }
+      },
+      {
+        $group: {
+          _id: {
+            userId: '$user._id',
+            userName: '$user.name',
+            email: '$user.email',
+            date: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } }
+          },
+          totalSeconds: { $sum: '$workedSeconds' }
+        }
+      },
+      {
+        $addFields: {
+          workedHours: {
+            $concat: [
+              {
+                $cond: [
+                  { $lt: [{ $floor: { $divide: ['$totalSeconds', 3600] } }, 10] },
+                  { $concat: ['0', { $toString: { $floor: { $divide: ['$totalSeconds', 3600] } } }] },
+                  { $toString: { $floor: { $divide: ['$totalSeconds', 3600] } } }
+                ]
+              },
+              ':',
+              {
+                $cond: [
+                  { $lt: [{ $mod: [{ $floor: { $divide: ['$totalSeconds', 60] } }, 60] }, 10] },
+                  { $concat: ['0', { $toString: { $mod: [{ $floor: { $divide: ['$totalSeconds', 60] } }, 60] } }] },
+                  { $toString: { $mod: [{ $floor: { $divide: ['$totalSeconds', 60] } }, 60] } }
+                ]
+              },
+              ':',
+              {
+                $cond: [
+                  { $lt: [{ $mod: ['$totalSeconds', 60] }, 10] },
+                  { $concat: ['0', { $toString: { $mod: ['$totalSeconds', 60] } }] },
+                  { $toString: { $mod: ['$totalSeconds', 60] } }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      {
+        $project: {
+          _id: 0,
+          userId: '$_id.userId',
+          userName: '$_id.userName',
+          email: '$_id.email',
+          date: '$_id.date',
+          workedHours: 1,
+          totalSeconds: 1
+        }
+      },
+      { $sort: { date: -1 } }
+    ]);
+
+    // 🧾 Build full date range
+    const allDates = [];
+    for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
+      allDates.push(new Date(d).toISOString().split('T')[0]);
+    }
+
+    // 🧩 Get all users in filter scope
+    const userFilter = {};
+    if (user.role === 'Admin') userFilter.companyId = user.companyId;
+    if (user.role === 'BranchManager') userFilter.branchId = user.branchId;
+    if (branchIds.length) userFilter.branchId = { $in: branchIds };
+    if (deptIds.length) userFilter.departmentId = { $in: deptIds };
+    if (designationIds.length) userFilter.designationId = { $in: designationIds };
+    if (employeeIds.length) userFilter._id = { $in: employeeIds };
+
+    const users = await User.find(userFilter, { _id: 1, name: 1, email: 1 }).lean();
+
+    // 🧾 Combine logs + missing dates (workedHours = 0)
+    const attendance = [];
+    for (const u of users) {
+      for (const date of allDates) {
+        const found = logs.find(
+          (l) => l.userId.toString() === u._id.toString() && l.date === date
+        );
+        attendance.push({
+          userId: u._id,
+          userName: u.name,
+          email: u.email,
+          date,
+          workedHours: found ? found.workedHours : '00:00:00'
+        });
+      }
+    }
+
+    // 🧮 Build summary (total workedHours per employee)
+    const summaryMap = {};
+    for (const a of attendance) {
+      if (!summaryMap[a.userId]) summaryMap[a.userId] = { ...a, totalSeconds: 0 };
+      const parts = a.workedHours.split(':').map(Number);
+      summaryMap[a.userId].totalSeconds += parts[0] * 3600 + parts[1] * 60 + parts[2];
+    }
+
+    const summary = Object.values(summaryMap).map((s) => {
+      const h = Math.floor(s.totalSeconds / 3600);
+      const m = Math.floor((s.totalSeconds % 3600) / 60);
+      const sec = s.totalSeconds % 60;
+      const format = (v) => (v < 10 ? `0${v}` : v);
+      return {
+        userId: s.userId,
+        userName: s.userName,
+        email: s.email,
+        totalWorkedHours: `${format(h)}:${format(m)}:${format(sec)}`
+      };
+    });
+
+    // 🧹 Sort by date (latest first)
+    attendance.sort((a, b) => new Date(b.date) - new Date(a.date));
+
+    res.status(200).json({
+      message: 'Attendance fetched successfully',
+      count: attendance.length,
+      attendance,
+      summary
+    });
+  } catch (err) {
+    console.error('Get Attendance Error:', err);
+    res.status(500).json({ message: 'Internal server error', error: err.message });
+  }
+};
 
 // Helper function
 function formatSecondsToHHMMSS(totalSeconds) {
