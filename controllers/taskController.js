@@ -33,11 +33,34 @@ exports.createTask = async (req, res) => {
       attachments
     } = req.body;
 
-    const project = await Project.findById(projectId).populate('companyId', 'name');
+    // ✅ Validate project
+    const project = await Project.findById(projectId).populate('companyId', 'name branchId');
     if (!project) {
       return res.status(400).json({ message: 'Invalid project ID' });
     }
 
+    // ✅ Check if this is a parent or child
+    let isParent = false;
+    let branchId = project.branchId;
+
+    let parentTask = null;
+    if (parentTaskId) {
+      parentTask = await Task.findById(parentTaskId);
+      if (!parentTask) {
+        return res.status(404).json({ message: 'Parent task not found' });
+      }
+
+      // Mark parent as parent task if not already
+      if (!parentTask.isParent) {
+        parentTask.isParent = true;
+        await parentTask.save();
+      }
+    } else {
+      isParent = true;
+    }
+    // console.log('Is Parent Task:', isParent, req.body); return
+
+    // ✅ Create task
     const newTask = new Task({
       title,
       description,
@@ -52,20 +75,23 @@ exports.createTask = async (req, res) => {
       actualHours,
       progress,
       parentTaskId: parentTaskId || null,
+      isParent,
       attachments,
       createdBy,
       companyId: user.companyId,
-      branchId: project.branchId
+      branchId
     });
 
     await newTask.save();
 
-    // ✅ If subtask, link it to its parent
+    // ✅ If child task → push into parent.subTasks
     if (parentTaskId) {
-      await Task.findByIdAndUpdate(parentTaskId, { $push: { subTasks: newTask._id } });
+      await Task.findByIdAndUpdate(parentTaskId, {
+        $push: { subTasks: newTask._id }
+      });
     }
 
-    // ✅ Send Email Notification to Assigned Employees
+    // ✅ Send email notifications
     if (assignedTo && assignedTo.length > 0) {
       const assignedUsers = await User.find({ _id: { $in: assignedTo } });
 
@@ -92,7 +118,9 @@ exports.createTask = async (req, res) => {
 
     res.status(201).json({
       success: true,
-      message: parentTaskId ? 'Subtask created successfully and email sent' : 'Task created successfully and email sent',
+      message: parentTaskId
+        ? 'Child task created and linked successfully'
+        : 'Parent task created successfully',
       task: newTask
     });
 
