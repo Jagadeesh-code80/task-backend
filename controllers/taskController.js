@@ -131,7 +131,7 @@ exports.createTask = async (req, res) => {
 };
 
 
-// Get All Tasks (Role-based access + nested subtasks + parent inclusion)
+// Get All Tasks (Role-based + Nested + Parent Inclusion + Logs Mapping)
 exports.getAllTasks = async (req, res) => {
   try {
     const userId = req.user?.userId;
@@ -140,26 +140,26 @@ exports.getAllTasks = async (req, res) => {
       return res.status(403).json({ message: 'Unauthorized access' });
     }
 
+    console.log(`\n=== [TASK FETCH START] ===`);
+    console.log(`User: ${user.name} (${user._id}) | Role: ${user.role}`);
+
     let filter = {};
 
     // Role-based filters
     if (user.role === 'Admin') {
       filter.companyId = user.companyId;
+      console.log(`Applying Admin filter -> companyId: ${user.companyId}`);
     } else if (user.role === 'BranchManager') {
       filter.branchId = user.branchId;
+      console.log(`Applying BranchManager filter -> branchId: ${user.branchId}`);
     } else {
-      // For regular users — find tasks created by or assigned to the user
-      filter.$or = [
-        { createdBy: userId },
-        { assignedTo: userId }
-      ];
+      filter.$or = [{ createdBy: userId }, { assignedTo: userId }];
+      console.log(`Applying User filter -> createdBy or assignedTo: ${userId}`);
     }
 
-    // Recursive function to fetch subtasks
-    const fetchSubtasks = async (parentId, user) => {
+    // 🔁 Recursive function to fetch subtasks with logs
+    const fetchSubtasks = async (parentId, user, depth = 1) => {
       let subFilter = { parentTaskId: parentId };
-
-      // Apply same role-based filter to subtasks
       if (user.role === 'Admin') subFilter.companyId = user.companyId;
       else if (user.role === 'BranchManager') subFilter.branchId = user.branchId;
       else subFilter.$or = [{ createdBy: user._id }, { assignedTo: user._id }];
@@ -174,12 +174,25 @@ exports.getAllTasks = async (req, res) => {
         .lean();
 
       for (let subtask of subtasks) {
-        subtask.subtasks = await fetchSubtasks(subtask._id, user);
+        console.log(`${'  '.repeat(depth)}[Subtask] ${subtask.title || 'Untitled'} (${subtask._id})`);
+
+        // 🧩 Attach TaskLog entries (time tracking logs)
+        const logs = await TaskLog.find({ taskId: subtask._id })
+          .populate('userId', 'name email avatar')
+          .sort({ createdAt: -1 })
+          .lean();
+
+        subtask.logs = logs;
+        console.log(`${'  '.repeat(depth)}  ↳ ${logs.length} logs attached`);
+
+        // 🔁 Recursively attach deeper subtasks
+        subtask.subtasks = await fetchSubtasks(subtask._id, user, depth + 1);
       }
+
       return subtasks;
     };
 
-    // STEP 1: find all tasks directly visible to the user
+    // 🟢 Step 1: Find all visible tasks
     const visibleTasks = await Task.find(filter)
       .populate('projectId', 'name')
       .populate('assignedTo', 'name email avatar')
@@ -189,13 +202,14 @@ exports.getAllTasks = async (req, res) => {
       .sort({ updatedAt: -1 })
       .lean();
 
-    // STEP 2: collect parent IDs for any subtasks they have
+    console.log(`Visible tasks found: ${visibleTasks.length}`);
+
+    // 🟢 Step 2: Get parent tasks for visible subtasks
     const parentIds = visibleTasks
       .filter(t => t.parentTaskId)
       .map(t => t.parentTaskId?._id)
       .filter(Boolean);
 
-    // STEP 3: include parent tasks for those subtasks
     const parentTasks = await Task.find({ _id: { $in: parentIds } })
       .populate('projectId', 'name')
       .populate('assignedTo', 'name email avatar')
@@ -203,19 +217,36 @@ exports.getAllTasks = async (req, res) => {
       .populate('lastUpdatedBy', 'name email avatar')
       .lean();
 
-    // Combine and remove duplicates
+    console.log(`Parent tasks fetched: ${parentTasks.length}`);
+
+    // 🟢 Step 3: Merge and deduplicate
     const allTasks = [...visibleTasks, ...parentTasks];
     const uniqueTasks = Object.values(
       allTasks.reduce((acc, t) => ({ ...acc, [t._id]: t }), {})
     );
 
-    // STEP 4: Only include top-level tasks (no parent)
+    // 🟢 Step 4: Get top-level tasks
     const topLevelTasks = uniqueTasks.filter(t => !t.parentTaskId);
+    console.log(`Top-level tasks: ${topLevelTasks.length}`);
 
-    // STEP 5: attach subtasks recursively
+    // 🟢 Step 5: Attach logs + subtasks recursively
     for (let task of topLevelTasks) {
+      console.log(`\n[Top-level Task] ${task.title || 'Untitled'} (${task._id})`);
+
+      // 🧩 Attach logs
+      const logs = await TaskLog.find({ taskId: task._id })
+        .populate('userId', 'name email avatar')
+        .sort({ createdAt: -1 })
+        .lean();
+
+      task.logs = logs;
+      console.log(`↳ ${logs.length} logs attached`);
+
+      // 🔁 Fetch subtasks recursively
       task.subtasks = await fetchSubtasks(task._id, user);
     }
+
+    console.log(`\n=== [TASK FETCH COMPLETE] === Total Top-Level: ${topLevelTasks.length}\n`);
 
     res.status(200).json({
       count: topLevelTasks.length,
@@ -223,11 +254,10 @@ exports.getAllTasks = async (req, res) => {
     });
 
   } catch (err) {
-    console.error('Get All Tasks Error:', err);
+    console.error('❌ Get All Tasks Error:', err);
     res.status(500).json({ message: 'Internal server error' });
   }
 };
-
 
 // Get Task by ID
 exports.getTaskById = async (req, res) => {
@@ -299,7 +329,8 @@ exports.toggleTaskLog = async (req, res) => {
     }
 
     // Convert UTC → IST (+5:30)
-    const currentISTTime = new Date(new Date().getTime() + 5.5 * 60 * 60 * 1000);
+    // const currentISTTime = new Date(new Date().getTime() + 5.5 * 60 * 60 * 1000);
+    const currentISTTime = new Date();
 
     // ===================== START TASK =====================
     if (isRunning) {
