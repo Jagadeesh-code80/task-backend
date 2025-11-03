@@ -131,7 +131,7 @@ exports.createTask = async (req, res) => {
 };
 
 
-// Get All Tasks (Role-based + Nested + Parent Inclusion + Logs Mapping)
+// Get All Tasks (Role-based + Nested + Parent Inclusion + Running Logs Mapping)
 exports.getAllTasks = async (req, res) => {
   try {
     const userId = req.user?.userId;
@@ -145,7 +145,7 @@ exports.getAllTasks = async (req, res) => {
 
     let filter = {};
 
-    // Role-based filters
+    // 🔹 Role-based filters
     if (user.role === 'Admin') {
       filter.companyId = user.companyId;
       console.log(`Applying Admin filter -> companyId: ${user.companyId}`);
@@ -157,7 +157,7 @@ exports.getAllTasks = async (req, res) => {
       console.log(`Applying User filter -> createdBy or assignedTo: ${userId}`);
     }
 
-    // 🔁 Recursive function to fetch subtasks with logs
+    // 🔁 Recursive function to fetch subtasks + running logs
     const fetchSubtasks = async (parentId, user, depth = 1) => {
       let subFilter = { parentTaskId: parentId };
       if (user.role === 'Admin') subFilter.companyId = user.companyId;
@@ -176,14 +176,17 @@ exports.getAllTasks = async (req, res) => {
       for (let subtask of subtasks) {
         console.log(`${'  '.repeat(depth)}[Subtask] ${subtask.title || 'Untitled'} (${subtask._id})`);
 
-        // 🧩 Attach TaskLog entries (time tracking logs)
-        const logs = await TaskLog.find({ taskId: subtask._id })
+        // 🧩 Attach only running TaskLogs
+        const runningLog = await TaskLog.find({
+          taskId: subtask._id,
+          isRunning: true
+        })
           .populate('userId', 'name email avatar')
           .sort({ createdAt: -1 })
           .lean();
 
-        subtask.logs = logs;
-        console.log(`${'  '.repeat(depth)}  ↳ ${logs.length} logs attached`);
+        subtask.runningLog = runningLog;
+        console.log(`${'  '.repeat(depth)}  ↳ ${runningLog.length} running logs attached`);
 
         // 🔁 Recursively attach deeper subtasks
         subtask.subtasks = await fetchSubtasks(subtask._id, user, depth + 1);
@@ -229,18 +232,21 @@ exports.getAllTasks = async (req, res) => {
     const topLevelTasks = uniqueTasks.filter(t => !t.parentTaskId);
     console.log(`Top-level tasks: ${topLevelTasks.length}`);
 
-    // 🟢 Step 5: Attach logs + subtasks recursively
+    // 🟢 Step 5: Attach running logs + subtasks recursively
     for (let task of topLevelTasks) {
       console.log(`\n[Top-level Task] ${task.title || 'Untitled'} (${task._id})`);
 
-      // 🧩 Attach logs
-      const logs = await TaskLog.find({ taskId: task._id })
+      // 🧩 Attach only running logs
+      const runningLog = await TaskLog.find({
+        taskId: task._id,
+        isRunning: true
+      })
         .populate('userId', 'name email avatar')
         .sort({ createdAt: -1 })
         .lean();
 
-      task.logs = logs;
-      console.log(`↳ ${logs.length} logs attached`);
+      task.runningLog = runningLog;
+      console.log(`↳ ${runningLog.length} running logs attached`);
 
       // 🔁 Fetch subtasks recursively
       task.subtasks = await fetchSubtasks(task._id, user);
@@ -258,6 +264,7 @@ exports.getAllTasks = async (req, res) => {
     res.status(500).json({ message: 'Internal server error' });
   }
 };
+
 
 // Get Task by ID
 exports.getTaskById = async (req, res) => {
@@ -360,54 +367,62 @@ exports.toggleTaskLog = async (req, res) => {
         message: "✅ Task started successfully",
         log: newLog,
       });
-    }
+   } else {
+  const runningLog = await TaskLog.findOne({ taskId, userId, isRunning: true });
+  if (!runningLog) {
+    return res.status(400).json({ message: "No running log found for this task" });
+  }
 
-    // ===================== STOP TASK =====================
-    else {
-      const runningLog = await TaskLog.findOne({ taskId, userId, isRunning: true });
-      if (!runningLog) {
-        return res.status(400).json({ message: "No running log found for this task" });
-      }
+  runningLog.isRunning = false;
+  runningLog.endTime = currentISTTime;
 
-      runningLog.isRunning = false;
-      runningLog.endTime = currentISTTime;
+  // Helper: Convert seconds → HH:MM:SS
+  const formatSecondsToHHMMSS = (seconds) => {
+    const h = String(Math.floor(seconds / 3600)).padStart(2, "0");
+    const m = String(Math.floor((seconds % 3600) / 60)).padStart(2, "0");
+    const s = String(seconds % 60).padStart(2, "0");
+    return `${h}:${m}:${s}`;
+  };
 
-      // Calculate time difference
-      const workedSeconds = Math.floor((runningLog.endTime - runningLog.startTime) / 1000);
-      runningLog.workedHours = formatSecondsToHHMMSS(workedSeconds);
-      await runningLog.save();
+  // Helper: Convert HH:MM:SS → seconds
+  const toSeconds = (timeStr) => {
+    if (!timeStr) return 0;
+    const [h, m, s] = timeStr.split(":").map(Number);
+    return h * 3600 + m * 60 + s;
+  };
 
-      // 🔹 Total worked seconds for this task (all users)
-      const allLogs = await TaskLog.find({ taskId });
-      const totalSeconds = allLogs.reduce((sum, log) => {
-        if (!log.workedHours) return sum;
-        const [h, m, s] = log.workedHours.split(":").map(Number);
-        return sum + (h * 3600 + m * 60 + s);
-      }, 0);
+  // 🕒 Calculate worked time for this session
+  const workedSeconds = Math.floor((runningLog.endTime - runningLog.startTime) / 1000);
+  runningLog.workedHours = formatSecondsToHHMMSS(workedSeconds);
+  await runningLog.save();
 
-      const formattedActualTime = formatSecondsToHHMMSS(totalSeconds);
+  // 🔹 Total actual time (sum of all logs)
+  const allLogs = await TaskLog.find({ taskId });
+  const totalSeconds = allLogs.reduce((sum, log) => sum + toSeconds(log.workedHours), 0);
+  const formattedActualTime = formatSecondsToHHMMSS(totalSeconds);
 
-      // 🔹 Add to task's previous workedHours
-      const prevWorked = task.workedHours
-        ? task.workedHours.split(":").map(Number)
-        : [0, 0, 0];
-      const prevWorkedSeconds = prevWorked[0] * 3600 + prevWorked[1] * 60 + prevWorked[2];
-      const totalWorkedSeconds = prevWorkedSeconds + workedSeconds;
-      const formattedWorkedTime = formatSecondsToHHMMSS(totalWorkedSeconds);
+  // 🔹 Add to task’s previous worked hours
+  const task = await Task.findById(taskId);
+  if (!task) return res.status(404).json({ message: "Task not found" });
 
-      // 🔹 Update Task
-      await Task.findByIdAndUpdate(taskId, {
-        actualHours: formattedActualTime,
-        workedHours: formattedWorkedTime,
-      });
+  const previousWorkedSeconds = toSeconds(task.workedHours);
+  const totalWorkedSeconds = previousWorkedSeconds + workedSeconds;
+  const formattedWorkedTime = formatSecondsToHHMMSS(totalWorkedSeconds);
 
-      return res.status(200).json({
-        message: "⏹️ Task stopped successfully",
-        log: runningLog,
-        actualHours: formattedActualTime,
-        workedHours: formattedWorkedTime,
-      });
-    }
+  // 🔹 Update task hours
+  await Task.findByIdAndUpdate(taskId, {
+    actualHours: formattedActualTime,
+    workedHours: formattedWorkedTime,
+  });
+
+  return res.status(200).json({
+    message: "⏹️ Task stopped successfully",
+    log: runningLog,
+    actualHours: formattedActualTime,
+    workedHours: formattedWorkedTime,
+  });
+}
+
   } catch (err) {
     console.error("❌ Toggle TaskLog Error:", err);
     res.status(500).json({ message: "Internal server error" });

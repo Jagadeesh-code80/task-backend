@@ -187,6 +187,7 @@ exports.sendMessage = async (req, res) => {
     return res.status(500).json({ error: err.message });
   }
 };
+
 // Bulk update - mark multiple messages as read
 exports.markMessagesRead = async (req, res) => {
   try {

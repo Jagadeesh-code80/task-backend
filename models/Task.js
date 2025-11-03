@@ -28,7 +28,7 @@ const taskSchema = new mongoose.Schema({
   completedDate: Date,
   estimatedHours: { type: String, trim: true },
   actualHours: { type: String, trim: true },
-  workedHours: { type: String, trim: true },
+  workedHours: { type: String, default: "00:00:00" },
   progress: { type: Number, min: 0, max: 100, default: 0 },
 
   // 👇 Hierarchical task structure

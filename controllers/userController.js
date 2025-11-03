@@ -3,37 +3,52 @@ const User = require('../models/User');
 exports.getEmployeesByLoggedInRole = async (req, res) => {
   try {
     const createdBy = req.user?.userId;
-
     const user = await User.findById(createdBy);
-    if (!user) return res.status(401).json({ message: 'Unauthorized: User not found' });
 
-    const filter = {};
+    if (!user) {
+      return res.status(401).json({ message: 'Unauthorized: User not found' });
+    }
+
+    let filter = {};
 
     switch (user.role) {
       case 'SuperAdmin':
-        // Can see all users
+        // SuperAdmin -> can see all users
         break;
 
       case 'Admin':
-        // Can see users in the same company
-        if (!user.companyId) return res.status(400).json({ message: 'Admin must be linked to a company' });
+        // Admin -> all users in same company
+        if (!user.companyId) {
+          return res.status(400).json({ message: 'Admin must be linked to a company' });
+        }
         filter.companyId = user.companyId;
         break;
 
       case 'BranchManager':
-        // Can see users in the same branch
-        if (!user.branchId) return res.status(400).json({ message: 'BranchManager must be linked to a branch' });
+        // BranchManager -> all users in same branch
+        if (!user.branchId) {
+          return res.status(400).json({ message: 'BranchManager must be linked to a branch' });
+        }
         filter.branchId = user.branchId;
         break;
-        
-       case 'User':
-        // Can see users in the same branch
-        if (!user.branchId) return res.status(400).json({ message: 'BranchManager must be linked to a branch' });
-        filter.branchId = user.branchId;
-        break;  
+
+      case 'User':
+        // User -> all users in same branch + company head (Admin)
+        if (!user.branchId || !user.companyId) {
+          return res.status(400).json({ message: 'User must be linked to a branch and company' });
+        }
+
+        // 1️⃣ Users from same branch
+        const branchFilter = { branchId: user.branchId };
+
+        // 2️⃣ Company head (Admin) of the same company
+        const companyHeadFilter = { companyId: user.companyId, role: 'Admin' };
+
+        // Combine both conditions
+        filter = { $or: [branchFilter, companyHeadFilter] };
+        break;
 
       default:
-        // Other roles (like normal User) shouldn't have access
         return res.status(403).json({ message: 'Access denied for this role' });
     }
 
@@ -41,8 +56,13 @@ exports.getEmployeesByLoggedInRole = async (req, res) => {
       .select('-password')
       .populate('companyId branchId departmentId designationId reportingHead', 'name');
 
-    res.status(200).json({ count: users.length, users });
+    res.status(200).json({
+      count: users.length,
+      users
+    });
+
   } catch (err) {
+    console.error('❌ getEmployeesByLoggedInRole Error:', err);
     res.status(500).json({ error: err.message });
   }
 };
