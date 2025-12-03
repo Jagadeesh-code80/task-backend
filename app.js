@@ -1,3 +1,4 @@
+// --------------------- server.js ---------------------
 const express = require('express');
 const mongoose = require('mongoose');
 const dotenv = require('dotenv');
@@ -5,6 +6,8 @@ const cors = require('cors');
 const { createServer } = require('http');
 const { Server } = require('socket.io');
 const socketHandler = require('./utils/socket');
+const cron = require("node-cron");
+const axios = require("axios");
 
 dotenv.config();
 
@@ -16,6 +19,14 @@ app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// --------- Healthcheck API ---------
+app.get("/api/healthcheck", (req, res) => {
+  res.status(200).json({
+    status: "running",
+    timestamp: new Date()
+  });
+});
+
 // --------- Socket.IO Setup ---------
 const io = new Server(httpServer, {
   cors: {
@@ -24,7 +35,7 @@ const io = new Server(httpServer, {
   }
 });
 
-// Attach io to requests
+// Attach io to requests (non-blocking emits)
 app.use((req, res, next) => {
   req.io = io;
   next();
@@ -39,24 +50,37 @@ app.use('/api/designation', require('./routes/designation'));
 app.use('/api/employees', require('./routes/userRoutes'));
 app.use('/api/project', require('./routes/projectRoutes'));
 app.use('/api/task', require('./routes/taskRoutes'));
-app.use('/api/chat', require('./routes/chatRoutes')); 
+app.use('/api/chat', require('./routes/chatRoutes'));
+
+// --------- CRON JOB TO PREVENT RENDER SLEEP ---------
+const SERVER_URL = "https://taskmanager-86fo.onrender.com";
+
+cron.schedule("*/5 * * * *", async () => {
+  try {
+    console.log("⏳ Cron: Pinging server to keep it awake...");
+    await axios.get(`${SERVER_URL}/api/healthcheck`);
+    console.log("💚 Server responded and is awake.");
+  } catch (error) {
+    console.error("❌ Cron ping failed:", error.message);
+  }
+});
 
 // --------- Connect to MongoDB, THEN start server ---------
 const PORT = process.env.PORT || 3000;
 
-mongoose.connect(process.env.MONGODB_URI, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true
+mongoose.connect(process.env.MONGODB_URI, {  
+    useNewUrlParser: true,
+    useUnifiedTopology: true,
+    maxPoolSize: 50,
+    serverSelectionTimeoutMS: 5000
 })
-  .then(() => {
+.then(() => {
     console.log('✅ MongoDB connected');
-    // Initialize sockets AFTER successful DB connection
-    socketHandler(io);
 
     httpServer.listen(PORT, () => {
       console.log(`🚀 Server running on port ${PORT}`);
     });
-  })
-  .catch(err => {
+})
+.catch(err => {
     console.error('❌ MongoDB connection failed:', err.message);
-  });
+});

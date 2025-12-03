@@ -156,7 +156,7 @@ exports.sendMessage = async (req, res) => {
     const { conversationId, text, fileUrl, replyTo } = req.body;
 
     if (!userId) {
-      return res.status(401).json({ error: "Unauthorized: no userId found" });
+      return res.status(400).json({ error: "Unauthorized: no userId found" });
     }
 
     // Check if request already processed (prevent duplicates)
@@ -195,7 +195,7 @@ exports.markMessagesRead = async (req, res) => {
     const { messageIds } = req.body; // Array of messageIds
 
     if (!userId) {
-      return res.status(401).json({ error: "Unauthorized: no userId found" });
+      return res.status(400).json({ error: "Unauthorized: no userId found" });
     }
 
     if (!Array.isArray(messageIds) || messageIds.length === 0) {

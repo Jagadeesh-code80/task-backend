@@ -6,7 +6,7 @@ exports.createBranch = async (req, res) => {
   try {
     const createdBy = req.user?.userId;
     if (!createdBy)
-      return res.status(401).json({ message: "Unauthorized: Missing user info from token" });
+      return res.status(400).json({ message: "Unauthorized: Missing user info from token" });
 
     const currentUser = await User.findById(createdBy);
     if (!currentUser) {

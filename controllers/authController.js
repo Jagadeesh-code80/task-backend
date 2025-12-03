@@ -208,13 +208,13 @@ exports.login = async (req, res) => {
 
     const { email, password } = req.body;
     console.log(password)
-    if (!email || !password) return res.status(400).json({ error: 'Email and password are required' });
+    if (!email || !password) return res.status(400).json({ message: 'Email and password are required' });
 
     const user = await User.findOne({ email });
-    if (!user) return res.status(401).json({ error: 'Invalid email' });
+    if (!user) return res.status(400).json({ message: 'Invalid email' });
 
     const isMatch = await user.comparePassword(password);
-    if (!isMatch) return res.status(401).json({ error: 'Invalid  password' });
+    if (!isMatch) return res.status(400).json({ message: 'Invalid  password' });
 
     const token = jwt.sign(
       { userId: user._id, role: user.role, name: user.name },
@@ -235,7 +235,7 @@ exports.getProfile = async (req, res) => {
     const userId = req.user?.userId; // Extracted from JWT middleware
 
     if (!userId) {
-      return res.status(401).json({ message: 'Unauthorized: Missing user ID' });
+      return res.status(400).json({ message: 'Unauthorized: Missing user ID' });
     }
 
     const user = await User.findById(userId)
@@ -256,7 +256,7 @@ exports.updateProfile = async (req, res) => {
     const userId = req.user?.userId;
 
     if (!userId) {
-      return res.status(401).json({ message: 'Unauthorized: Missing user ID' });
+      return res.status(400).json({ message: 'Unauthorized: Missing user ID' });
     }
 
     const allowedUpdates = [

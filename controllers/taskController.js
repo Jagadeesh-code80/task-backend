@@ -140,119 +140,56 @@ exports.getAllTasks = async (req, res) => {
       return res.status(403).json({ message: 'Unauthorized access' });
     }
 
-    console.log(`\n=== [TASK FETCH START] ===`);
-    console.log(`User: ${user.name} (${user._id}) | Role: ${user.role}`);
-
     let filter = {};
 
-    // 🔹 Role-based filters
-    if (user.role === 'Admin') {
-      filter.companyId = user.companyId;
-      console.log(`Applying Admin filter -> companyId: ${user.companyId}`);
-    } else if (user.role === 'BranchManager') {
-      filter.branchId = user.branchId;
-      console.log(`Applying BranchManager filter -> branchId: ${user.branchId}`);
-    } else {
-      filter.$or = [{ createdBy: userId }, { assignedTo: userId }];
-      console.log(`Applying User filter -> createdBy or assignedTo: ${userId}`);
-    }
+    // Role-based filters
+    if (user.role === 'Admin') filter.companyId = user.companyId;
+    else if (user.role === 'BranchManager') filter.branchId = user.branchId;
+    else filter.$or = [{ createdBy: userId }, { assignedTo: userId }];
 
-    // 🔁 Recursive function to fetch subtasks + running logs
-    const fetchSubtasks = async (parentId, user, depth = 1) => {
-      let subFilter = { parentTaskId: parentId };
-      if (user.role === 'Admin') subFilter.companyId = user.companyId;
-      else if (user.role === 'BranchManager') subFilter.branchId = user.branchId;
-      else subFilter.$or = [{ createdBy: user._id }, { assignedTo: user._id }];
+    // 1️⃣ Fetch all tasks for this user/role
+    const tasks = await Task.find(filter)
+      .populate('projectId', 'name')
+      .populate('assignedTo', 'name email avatar')
+      .populate('createdBy', 'name email avatar')
+      .populate('lastUpdatedBy', 'name email avatar')
+       .populate('statusHistory.changedBy', 'name email avatar')
+      .lean();
 
-      const subtasks = await Task.find(subFilter)
-        .populate('projectId', 'name')
-        .populate('assignedTo', 'name email avatar')
-        .populate('createdBy', 'name email avatar')
-        .populate('lastUpdatedBy', 'name email avatar')
-        .populate('parentTaskId', 'title')
-        .sort({ updatedAt: -1 })
-        .lean();
+    const taskIds = tasks.map(t => t._id);
 
-      for (let subtask of subtasks) {
-        console.log(`${'  '.repeat(depth)}[Subtask] ${subtask.title || 'Untitled'} (${subtask._id})`);
+    // 2️⃣ Fetch all running logs for these tasks in one query
+    const logs = await TaskLog.find({
+      taskId: { $in: taskIds },
+      isRunning: true
+    })
+      .populate('userId', 'name email avatar')
+      .sort({ createdAt: -1 })
+      .lean();
 
-        // 🧩 Attach only running TaskLogs
-        const runningLog = await TaskLog.find({
-          taskId: subtask._id,
-          isRunning: true
-        })
-          .populate('userId', 'name email avatar')
-          .sort({ createdAt: -1 })
-          .lean();
+    // 3️⃣ Build a map of logs per task
+    const logsMap = {};
+    logs.forEach(log => {
+      const tid = log.taskId.toString();
+      if (!logsMap[tid]) logsMap[tid] = [];
+      logsMap[tid].push(log);
+    });
 
-        subtask.runningLog = runningLog;
-        console.log(`${'  '.repeat(depth)}  ↳ ${runningLog.length} running logs attached`);
+    // 4️⃣ Build task hierarchy in memory
+    const taskMap = {};
+    tasks.forEach(t => {
+      taskMap[t._id.toString()] = { ...t, subtasks: [], runningLog: logsMap[t._id.toString()] || [] };
+    });
 
-        // 🔁 Recursively attach deeper subtasks
-        subtask.subtasks = await fetchSubtasks(subtask._id, user, depth + 1);
+    const topLevelTasks = [];
+    tasks.forEach(t => {
+      if (t.parentTaskId) {
+        const parent = taskMap[t.parentTaskId.toString()];
+        if (parent) parent.subtasks.push(taskMap[t._id.toString()]);
+      } else {
+        topLevelTasks.push(taskMap[t._id.toString()]);
       }
-
-      return subtasks;
-    };
-
-    // 🟢 Step 1: Find all visible tasks
-    const visibleTasks = await Task.find(filter)
-      .populate('projectId', 'name')
-      .populate('assignedTo', 'name email avatar')
-      .populate('createdBy', 'name email avatar')
-      .populate('lastUpdatedBy', 'name email avatar')
-      .populate('parentTaskId', 'title')
-      .sort({ updatedAt: -1 })
-      .lean();
-
-    console.log(`Visible tasks found: ${visibleTasks.length}`);
-
-    // 🟢 Step 2: Get parent tasks for visible subtasks
-    const parentIds = visibleTasks
-      .filter(t => t.parentTaskId)
-      .map(t => t.parentTaskId?._id)
-      .filter(Boolean);
-
-    const parentTasks = await Task.find({ _id: { $in: parentIds } })
-      .populate('projectId', 'name')
-      .populate('assignedTo', 'name email avatar')
-      .populate('createdBy', 'name email avatar')
-      .populate('lastUpdatedBy', 'name email avatar')
-      .lean();
-
-    console.log(`Parent tasks fetched: ${parentTasks.length}`);
-
-    // 🟢 Step 3: Merge and deduplicate
-    const allTasks = [...visibleTasks, ...parentTasks];
-    const uniqueTasks = Object.values(
-      allTasks.reduce((acc, t) => ({ ...acc, [t._id]: t }), {})
-    );
-
-    // 🟢 Step 4: Get top-level tasks
-    const topLevelTasks = uniqueTasks.filter(t => !t.parentTaskId);
-    console.log(`Top-level tasks: ${topLevelTasks.length}`);
-
-    // 🟢 Step 5: Attach running logs + subtasks recursively
-    for (let task of topLevelTasks) {
-      console.log(`\n[Top-level Task] ${task.title || 'Untitled'} (${task._id})`);
-
-      // 🧩 Attach only running logs
-      const runningLog = await TaskLog.find({
-        taskId: task._id,
-        isRunning: true
-      })
-        .populate('userId', 'name email avatar')
-        .sort({ createdAt: -1 })
-        .lean();
-
-      task.runningLog = runningLog;
-      console.log(`↳ ${runningLog.length} running logs attached`);
-
-      // 🔁 Fetch subtasks recursively
-      task.subtasks = await fetchSubtasks(task._id, user);
-    }
-
-    console.log(`\n=== [TASK FETCH COMPLETE] === Total Top-Level: ${topLevelTasks.length}\n`);
+    });
 
     res.status(200).json({
       count: topLevelTasks.length,
@@ -275,9 +212,12 @@ exports.getTaskById = async (req, res) => {
       .populate('departmentId', 'name')
       .populate('createdBy', 'name email avatar')
       .populate('lastUpdatedBy', 'name email avatar')
-      .populate('parentTaskId', 'title');
+      .populate('parentTaskId', 'title')
+      .populate('statusHistory.changedBy', 'name email avatar'); 
 
-    if (!task) return res.status(404).json({ message: 'Task not found' });
+    if (!task) {
+      return res.status(404).json({ message: 'Task not found' });
+    }
 
     res.status(200).json({ task });
   } catch (err) {
@@ -285,6 +225,7 @@ exports.getTaskById = async (req, res) => {
     res.status(500).json({ message: 'Internal server error' });
   }
 };
+
 
 // Update Task
 exports.updateTask = async (req, res) => {
@@ -320,108 +261,84 @@ exports.deleteTask = async (req, res) => {
 };
 
 
-// Toggle Task Log (Start / Stop)
 exports.toggleTaskLog = async (req, res) => {
   try {
     const userId = req.user?.userId;
     const { taskId, isRunning } = req.body;
 
-    if (!taskId) {
-      return res.status(400).json({ message: "Task ID is required" });
-    }
+    if (!taskId) return res.status(400).json({ message: "Task ID is required" });
 
-    const task = await Task.findById(taskId);
-    if (!task) {
-      return res.status(404).json({ message: "Task not found" });
-    }
+    const task = await Task.findById(taskId).lean();
+    if (!task) return res.status(404).json({ message: "Task not found" });
 
-    // Convert UTC → IST (+5:30)
-    // const currentISTTime = new Date(new Date().getTime() + 5.5 * 60 * 60 * 1000);
-    const currentISTTime = new Date();
+    const now = new Date();
 
-    // ===================== START TASK =====================
+    // Helper: seconds ↔ HH:MM:SS
+    const formatSeconds = (s) => {
+      const h = String(Math.floor(s / 3600)).padStart(2, "0");
+      const m = String(Math.floor((s % 3600) / 60)).padStart(2, "0");
+      const sec = String(s % 60).padStart(2, "0");
+      return `${h}:${m}:${sec}`;
+    };
+    const toSeconds = (str) => {
+      if (!str) return 0;
+      const [h, m, s] = str.split(":").map(Number);
+      return h * 3600 + m * 60 + s;
+    };
+
     if (isRunning) {
-      // Stop any previously running log for this user
+      // Stop previous running log for this user
       const previousLog = await TaskLog.findOne({ userId, isRunning: true });
       if (previousLog) {
+        const diff = Math.floor((now - previousLog.startTime) / 1000);
         previousLog.isRunning = false;
-        previousLog.endTime = currentISTTime;
-
-        const diffSeconds = Math.floor((previousLog.endTime - previousLog.startTime) / 1000);
-        previousLog.workedHours = formatSecondsToHHMMSS(diffSeconds);
-
+        previousLog.endTime = now;
+        previousLog.workedHours = formatSeconds(diff);
         await previousLog.save();
       }
 
-      // Start a new log for this task
-      const newLog = new TaskLog({
+      // Start new log
+      const newLog = await TaskLog.create({
         taskId,
         userId,
-        startTime: currentISTTime,
+        startTime: now,
         isRunning: true,
         workedHours: "00:00:00",
       });
-      await newLog.save();
 
-      return res.status(201).json({
-        message: "✅ Task started successfully",
-        log: newLog,
+      return res.status(201).json({ message: "✅ Task started", log: newLog });
+
+    } else {
+      // Stop current running log
+      const runningLog = await TaskLog.findOne({ taskId, userId, isRunning: true });
+      if (!runningLog) return res.status(400).json({ message: "No running log found" });
+
+      const diffSeconds = Math.floor((now - runningLog.startTime) / 1000);
+      runningLog.isRunning = false;
+      runningLog.endTime = now;
+      runningLog.workedHours = formatSeconds(diffSeconds);
+
+      // Update task actual/worked hours using $inc
+      const previousWorked = toSeconds(task.workedHours);
+      const totalWorked = previousWorked + diffSeconds;
+
+      const totalActual = toSeconds(task.actualHours || "00:00:00") + diffSeconds;
+
+      await Promise.all([
+        runningLog.save(),
+        Task.findByIdAndUpdate(taskId, {
+          workedHours: formatSeconds(totalWorked),
+          actualHours: formatSeconds(totalActual),
+        })
+      ]);
+
+      return res.status(200).json({
+        message: "⏹️ Task stopped",
+        log: runningLog,
+        workedHours: formatSeconds(totalWorked),
+        actualHours: formatSeconds(totalActual)
       });
-   } else {
-  const runningLog = await TaskLog.findOne({ taskId, userId, isRunning: true });
-  if (!runningLog) {
-    return res.status(400).json({ message: "No running log found for this task" });
-  }
-
-  runningLog.isRunning = false;
-  runningLog.endTime = currentISTTime;
-
-  // Helper: Convert seconds → HH:MM:SS
-  const formatSecondsToHHMMSS = (seconds) => {
-    const h = String(Math.floor(seconds / 3600)).padStart(2, "0");
-    const m = String(Math.floor((seconds % 3600) / 60)).padStart(2, "0");
-    const s = String(seconds % 60).padStart(2, "0");
-    return `${h}:${m}:${s}`;
-  };
-
-  // Helper: Convert HH:MM:SS → seconds
-  const toSeconds = (timeStr) => {
-    if (!timeStr) return 0;
-    const [h, m, s] = timeStr.split(":").map(Number);
-    return h * 3600 + m * 60 + s;
-  };
-
-  // 🕒 Calculate worked time for this session
-  const workedSeconds = Math.floor((runningLog.endTime - runningLog.startTime) / 1000);
-  runningLog.workedHours = formatSecondsToHHMMSS(workedSeconds);
-  await runningLog.save();
-
-  // 🔹 Total actual time (sum of all logs)
-  const allLogs = await TaskLog.find({ taskId });
-  const totalSeconds = allLogs.reduce((sum, log) => sum + toSeconds(log.workedHours), 0);
-  const formattedActualTime = formatSecondsToHHMMSS(totalSeconds);
-
-  // 🔹 Add to task’s previous worked hours
-  const task = await Task.findById(taskId);
-  if (!task) return res.status(404).json({ message: "Task not found" });
-
-  const previousWorkedSeconds = toSeconds(task.workedHours);
-  const totalWorkedSeconds = previousWorkedSeconds + workedSeconds;
-  const formattedWorkedTime = formatSecondsToHHMMSS(totalWorkedSeconds);
-
-  // 🔹 Update task hours
-  await Task.findByIdAndUpdate(taskId, {
-    actualHours: formattedActualTime,
-    workedHours: formattedWorkedTime,
-  });
-
-  return res.status(200).json({
-    message: "⏹️ Task stopped successfully",
-    log: runningLog,
-    actualHours: formattedActualTime,
-    workedHours: formattedWorkedTime,
-  });
-}
+    }
 
   } catch (err) {
     console.error("❌ Toggle TaskLog Error:", err);
@@ -804,3 +721,56 @@ function formatSecondsToHHMMSS(totalSeconds) {
     seconds.toString().padStart(2, "0"),
   ].join(":");
 }
+
+
+// Status Tracker
+exports.updateTaskStatus = async (req, res) => {
+  try {
+    const { status, remarks } = req.body;
+    const updatedBy = req.user?.userId;
+
+    const task = await Task.findById(req.params.id);
+    if (!task) return res.status(404).json({ message: "Task not found" });
+
+    const oldStatus = task.status;
+
+    // If status doesn't change
+    if (oldStatus === status) {
+      return res.status(200).json({ message: "Status already same", task });
+    }
+
+    // Update main task status
+    task.status = status;
+    task.lastUpdatedBy = updatedBy;
+
+    // ⭐ Add status history entry
+    task.statusHistory.push({
+      fromStatus: oldStatus,
+      toStatus: status,
+      changedBy: updatedBy,
+      changedAt: new Date()
+    });
+
+    // ⭐ Add general task update log
+    task.taskUpdates.push({
+      updateType: "status-change",
+      oldValue: oldStatus,
+      newValue: status,
+      remarks: remarks || "",
+      updatedBy,
+      updatedAt: new Date()
+    });
+
+    await task.save();
+
+    res.status(200).json({
+      message: "Task status updated successfully",
+      task
+    });
+
+  } catch (err) {
+    console.error("Task Status Update Error:", err);
+    res.status(500).json({ message: "Internal server error" });
+  }
+};
+

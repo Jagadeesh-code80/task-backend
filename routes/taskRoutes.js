@@ -15,6 +15,7 @@ router.delete('/:id', taskController.deleteTask);
 router.post('/toggle', taskController.toggleTaskLog);
 router.get("/logs/all", taskController.getAllLogs);
 router.get("/attendance/log", taskController.getAttendance);
+router.put('/status/:id', taskController.updateTaskStatus);
 
 
 module.exports = router;

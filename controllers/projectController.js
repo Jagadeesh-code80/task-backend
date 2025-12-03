@@ -96,27 +96,25 @@ exports.createProject = async (req, res) => {
 exports.getAllProjects = async (req, res) => {
   try {
     const userId = req.user?.userId;
-    const user = await User.findById(userId);
+    const user = await User.findById(userId).lean(); // lean() = faster
 
     if (!user || !user.role) {
       return res.status(403).json({ message: 'Unauthorized access' });
     }
 
+    // Role-based filter
     let filter = {};
+    if (user.role === 'Admin') filter.companyId = user.companyId;
+    else if (user.role === 'BranchManager') filter.branchId = user.branchId;
+    else filter.$or = [
+      { teamLeadId: userId },
+      { managerId: userId },
+      { assignedEmployees: userId }
+    ];
 
-    if (user.role === 'Admin') {
-      filter.companyId = user.companyId;
-    } else if (user.role === 'BranchManager') {
-      filter.branchId = user.branchId;
-    } else {
-      filter.$or = [
-        { teamLeadId: userId },
-        { managerId: userId },
-        { assignedEmployees: userId }
-      ];
-    }
-
+    // Fetch all projects
     const projects = await Project.find(filter)
+      .select('name teamLeadId managerId assignedEmployees companyId branchId departmentIds createdBy lastUpdatedBy') // select only needed fields
       .populate('teamLeadId', 'name email avatar')
       .populate('managerId', 'name email avatar')
       .populate('assignedEmployees', 'name email avatar')
@@ -124,7 +122,8 @@ exports.getAllProjects = async (req, res) => {
       .populate('branchId', 'name')
       .populate('departmentIds', 'name')
       .populate('createdBy', 'name email avatar')
-      .populate('lastUpdatedBy', 'name email avatar');
+      .populate('lastUpdatedBy', 'name email avatar')
+      .lean(); // lean() = plain JS objects, faster than full Mongoose docs
 
     res.status(200).json({ count: projects.length, projects });
   } catch (err) {
@@ -132,6 +131,7 @@ exports.getAllProjects = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
+
 
 // Get Single Project by ID
 exports.getProjectById = async (req, res) => {

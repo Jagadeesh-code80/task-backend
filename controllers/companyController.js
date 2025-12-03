@@ -8,7 +8,7 @@ exports.createCompany = async (req, res) => {
     // 1️⃣ Extract createdBy from authenticated token
     const createdBy = req.user?.userId;
     if (!createdBy)
-      return res.status(401).json({ error: 'Unauthorized: Missing user info from token' });
+      return res.status(400).json({ error: 'Unauthorized: Missing user info from token' });
 
     // 2️⃣ Support both JSON (nested) and form-data (flat)
     const isNested = typeof req.body.company === 'object' && typeof req.body.head === 'object';

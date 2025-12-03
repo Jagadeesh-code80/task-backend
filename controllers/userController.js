@@ -6,7 +6,7 @@ exports.getEmployeesByLoggedInRole = async (req, res) => {
     const user = await User.findById(createdBy);
 
     if (!user) {
-      return res.status(401).json({ message: 'Unauthorized: User not found' });
+      return res.status(400).json({ message: 'Unauthorized: User not found' });
     }
 
     let filter = {};
