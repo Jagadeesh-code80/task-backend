@@ -143,31 +143,59 @@ exports.getAllTasks = async (req, res) => {
     let filter = {};
 
     // Role-based filters
-    if (user.role === 'Admin') filter.companyId = user.companyId;
-    else if (user.role === 'BranchManager') filter.branchId = user.branchId;
-    else filter.$or = [{ createdBy: userId }, { assignedTo: userId }];
+    if (user.role === 'Admin') {
+      filter.companyId = user.companyId;
+    } else if (user.role === 'BranchManager') {
+      filter.branchId = user.branchId;
+    } else {
+      filter.$or = [
+        { createdBy: userId },
+        { assignedTo: userId }
+      ];
+    }
 
-    // 1️⃣ Fetch all tasks for this user/role
+    // 1️⃣ Fetch tasks based on role/user
     const tasks = await Task.find(filter)
       .populate('projectId', 'name')
       .populate('assignedTo', 'name email avatar')
       .populate('createdBy', 'name email avatar')
       .populate('lastUpdatedBy', 'name email avatar')
-       .populate('statusHistory.changedBy', 'name email avatar')
+      .populate('statusHistory.changedBy', 'name email avatar')
       .lean();
 
-    const taskIds = tasks.map(t => t._id);
+    console.log('Fetched Tasks:', tasks.length);
 
-    // 2️⃣ Fetch all running logs for these tasks in one query
+    // 2️⃣ Collect all parentTaskId values
+    const parentIds = tasks
+      .filter(t => t.parentTaskId)
+      .map(t => t.parentTaskId.toString());
+
+    // 3️⃣ Fetch missing parent tasks
+    const missingParents = await Task.find({
+      _id: { $in: parentIds, $nin: tasks.map(t => t._id.toString()) }
+    })
+      .populate('projectId', 'name')
+      .populate('assignedTo', 'name email avatar')
+      .populate('createdBy', 'name email avatar')
+      .populate('lastUpdatedBy', 'name email avatar')
+      .populate('statusHistory.changedBy', 'name email avatar')
+      .lean();
+
+    // Merge tasks + missing parents
+    const allTasks = [...tasks, ...missingParents];
+
+    const allTaskIds = allTasks.map(t => t._id);
+
+    // 4️⃣ Fetch logs
     const logs = await TaskLog.find({
-      taskId: { $in: taskIds },
+      taskId: { $in: allTaskIds },
       isRunning: true
     })
       .populate('userId', 'name email avatar')
       .sort({ createdAt: -1 })
       .lean();
 
-    // 3️⃣ Build a map of logs per task
+    // 5️⃣ Log map
     const logsMap = {};
     logs.forEach(log => {
       const tid = log.taskId.toString();
@@ -175,14 +203,19 @@ exports.getAllTasks = async (req, res) => {
       logsMap[tid].push(log);
     });
 
-    // 4️⃣ Build task hierarchy in memory
+    // 6️⃣ Build hierarchy
     const taskMap = {};
-    tasks.forEach(t => {
-      taskMap[t._id.toString()] = { ...t, subtasks: [], runningLog: logsMap[t._id.toString()] || [] };
+    allTasks.forEach(t => {
+      taskMap[t._id.toString()] = {
+        ...t,
+        subtasks: [],
+        runningLog: logsMap[t._id.toString()] || []
+      };
     });
 
     const topLevelTasks = [];
-    tasks.forEach(t => {
+
+    allTasks.forEach(t => {
       if (t.parentTaskId) {
         const parent = taskMap[t.parentTaskId.toString()];
         if (parent) parent.subtasks.push(taskMap[t._id.toString()]);
@@ -191,16 +224,17 @@ exports.getAllTasks = async (req, res) => {
       }
     });
 
-    res.status(200).json({
+    return res.status(200).json({
       count: topLevelTasks.length,
       tasks: topLevelTasks
     });
 
   } catch (err) {
     console.error('❌ Get All Tasks Error:', err);
-    res.status(500).json({ message: 'Internal server error' });
+    return res.status(500).json({ message: 'Internal server error' });
   }
 };
+
 
 
 // Get Task by ID
@@ -729,21 +763,31 @@ exports.updateTaskStatus = async (req, res) => {
     const { status, remarks } = req.body;
     const updatedBy = req.user?.userId;
 
-    const task = await Task.findById(req.params.id);
-    if (!task) return res.status(404).json({ message: "Task not found" });
+    if (!updatedBy) {
+      return res.status(401).json({ message: "Unauthorized user" });
+    }
+
+    // Fetch task with user details
+    const task = await Task.findById(req.params.id)
+      .populate("assignedTo", "email name")
+      .populate("createdBy", "email name");
+
+    if (!task) {
+      return res.status(404).json({ message: "Task not found" });
+    }
 
     const oldStatus = task.status;
 
-    // If status doesn't change
+    // Prevent duplicate status updates
     if (oldStatus === status) {
       return res.status(200).json({ message: "Status already same", task });
     }
 
-    // Update main task status
+    // Update task
     task.status = status;
     task.lastUpdatedBy = updatedBy;
 
-    // ⭐ Add status history entry
+    // Add status history entry
     task.statusHistory.push({
       fromStatus: oldStatus,
       toStatus: status,
@@ -751,7 +795,7 @@ exports.updateTaskStatus = async (req, res) => {
       changedAt: new Date()
     });
 
-    // ⭐ Add general task update log
+    // Add general task update log
     task.taskUpdates.push({
       updateType: "status-change",
       oldValue: oldStatus,
@@ -763,13 +807,59 @@ exports.updateTaskStatus = async (req, res) => {
 
     await task.save();
 
+    // ------------------------------------------------------------
+    // EMAIL NOTIFICATION LOGIC
+    // ------------------------------------------------------------
+
+    const updater = await User.findById(updatedBy).select("email name");
+    if (updater?.email) {
+
+      // List of all participants
+      let ccEmails = [
+        ...task.assignedTo.map(a => a.email),
+        task.createdBy?.email
+      ];
+
+      // Remove invalid and duplicate emails
+      ccEmails = [...new Set(ccEmails.filter(Boolean))];
+
+      // Do not CC the person doing the update
+      ccEmails = ccEmails.filter(email => email !== updater.email);
+
+      // Email context
+      const emailContext = {
+        subject: `Task Status Updated: ${task.title}`,
+        taskTitle: task.title,
+        oldStatus,
+        newStatus: status,
+        remarks: remarks || "",
+        updatedBy: updater.name || "User",
+        projectName: task.projectName || "",
+        priority: task.priority || "",
+        updatedAt: new Date().toLocaleString()
+      };
+
+      // Send email
+      await sendMail(
+        updater.email,                      // TO: Updater
+        emailContext.subject,
+        "taskStatusUpdate",                 // Template name
+        emailContext,
+        ccEmails.length > 0 ? ccEmails : null
+      );
+
+      console.log("📧 Email notification sent!");
+    }
+
+    // ------------------------------------------------------------
+
     res.status(200).json({
       message: "Task status updated successfully",
       task
     });
 
   } catch (err) {
-    console.error("Task Status Update Error:", err);
+    console.error("❌ Task Status Update Error:", err);
     res.status(500).json({ message: "Internal server error" });
   }
 };
