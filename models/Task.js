@@ -81,19 +81,21 @@ const taskSchema = new mongoose.Schema({
   statusHistory: [{
     fromStatus: { type: String },
     toStatus: { type: String },
+    toStatus: { type: String },
+    remarks: { type: String, trim: true },
     changedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     changedAt: { type: Date, default: Date.now }
   }],
 
   // GENERAL TASK UPDATE LOG
-  taskUpdates: [{
-    updateType: { type: String },
-    oldValue: { type: String },
-    newValue: { type: String },
-    remarks: { type: String, trim: true },
-    updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
-    updatedAt: { type: Date, default: Date.now }
-  }]
+  // taskUpdates: [{
+  //   updateType: { type: String },
+  //   oldValue: { type: String },
+  //   newValue: { type: String },
+  //   remarks: { type: String, trim: true },
+  //   updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  //   updatedAt: { type: Date, default: Date.now }
+  // }]
 
 }, { timestamps: true });
 

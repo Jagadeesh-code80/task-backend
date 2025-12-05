@@ -32,8 +32,14 @@ const io = new Server(httpServer, {
   cors: {
     origin: "*",
     methods: ["GET", "POST"]
-  }
+  },
+  transports: ['websocket', 'polling'],
+  pingTimeout: 60000,
+  pingInterval: 25000
 });
+
+// Initialize Socket Handler - THIS IS WHAT YOU WERE MISSING!
+socketHandler(io);
 
 // Attach io to requests (non-blocking emits)
 app.use((req, res, next) => {
@@ -79,6 +85,7 @@ mongoose.connect(process.env.MONGODB_URI, {
 
     httpServer.listen(PORT, () => {
       console.log(`🚀 Server running on port ${PORT}`);
+      console.log(`🔌 Socket.IO ready at ws://localhost:${PORT}`);
     });
 })
 .catch(err => {

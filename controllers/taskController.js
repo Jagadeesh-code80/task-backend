@@ -160,7 +160,7 @@ exports.getAllTasks = async (req, res) => {
       .populate('assignedTo', 'name email avatar')
       .populate('createdBy', 'name email avatar')
       .populate('lastUpdatedBy', 'name email avatar')
-      .populate('statusHistory.changedBy', 'name email avatar')
+      .populate('statusHistory.changedBy', 'name email avatar ')
       .lean();
 
     console.log('Fetched Tasks:', tasks.length);
@@ -796,15 +796,15 @@ exports.updateTaskStatus = async (req, res) => {
       changedAt: new Date()
     });
 
-    // Add general task update log
-    task.taskUpdates.push({
-      updateType: "status-change",
-      oldValue: oldStatus,
-      newValue: status,
-      remarks: remarks || "",
-      updatedBy,
-      updatedAt: new Date()
-    });
+    // // Add general task update log
+    // task.taskUpdates.push({
+    //   updateType: "status-change",
+    //   oldValue: oldStatus,
+    //   newValue: status,
+    //   remarks: remarks || "",
+    //   updatedBy,
+    //   updatedAt: new Date()
+    // });
 
     await task.save();
 
