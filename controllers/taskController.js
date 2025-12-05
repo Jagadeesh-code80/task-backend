@@ -791,6 +791,7 @@ exports.updateTaskStatus = async (req, res) => {
     task.statusHistory.push({
       fromStatus: oldStatus,
       toStatus: status,
+      remarks: remarks,
       changedBy: updatedBy,
       changedAt: new Date()
     });
